@@ -1,0 +1,76 @@
+//
+// Simple notcurses-based GUI toolkit, core key definitions
+//
+// Authors:
+//   Miguel de Icaza (miguel.de.icaza@gmail.com)
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <cstdint>
+
+export module nctui:keys;
+
+export namespace nctui {
+
+/// Key codes in addition to what the notcurses NCKEY_* constants provide.
+///
+/// Control characters are encoded as their ASCII values (0–26).
+/// notcurses reports the Alt modifier in the separate ncinput::alt bool
+/// field (queryable via ncinput_alt_p), NOT folded into the key codepoint.
+/// handleInput() folds it into the key id using the Keys::Alt bit below so
+/// that widgets can detect Alt combinations via isAlt() with a single
+/// char32_t key parameter.
+enum class Keys : uint32_t {
+    CtrlSpace = 0,   ///< Control-Space
+    CtrlA     = 1,   ///< Control-A (Home in Emacs)
+    CtrlB     = 2,   ///< Control-B (backward char in Emacs)
+    CtrlC     = 3,   ///< Control-C (interrupt)
+    CtrlD     = 4,   ///< Control-D (delete char in Emacs)
+    CtrlE     = 5,   ///< Control-E (End in Emacs)
+    CtrlF     = 6,   ///< Control-F (forward char in Emacs)
+    Tab       = 9,   ///< Tab (focus next)
+    CtrlK     = 11,  ///< Control-K (kill to end of line)
+    Enter     = 13,  ///< Enter / Return
+    CtrlN     = 14,  ///< Control-N (next line)
+    CtrlP     = 16,  ///< Control-P (previous line)
+    CtrlQ     = 17,  ///< Control-Q (quote next character)
+    CtrlV     = 22,  ///< Control-V (page down in Emacs)
+    CtrlW     = 23,  ///< Control-W (cut region)
+    CtrlY     = 25,  ///< Control-Y (yank / paste)
+    CtrlZ     = 26,  ///< Control-Z (suspend)
+    Esc       = 27,  ///< Escape
+    ShiftTab  = 353, ///< Shift-Tab (focus previous)
+    /// Alt modifier bit folded into the key id by handleInput when
+    /// ncinput::alt is set. Chosen as 0x2000 to sit above the Unicode BMP
+    /// control range while staying clear of the NCKEY_* synthesized codes.
+    Alt       = 0x2000
+};
+
+/// Checks whether the given key was generated with the Alt modifier.
+///
+/// Returns 0 if the key was not generated with Alt; otherwise returns the
+/// key value with the Alt bit stripped (i.e. the base character).
+///
+/// The Alt bit is set by handleInput() from the ncinput::alt field, so this
+/// helper works uniformly across all widgets that receive a char32_t key.
+inline int isAlt(uint32_t key) {
+    if ((key & static_cast<uint32_t>(Keys::Alt)) != 0)
+        return key & ~static_cast<uint32_t>(Keys::Alt);
+    return 0;
+}
+
+// Convenience operators so Keys values can be combined with uint32_t
+// without explicit casts throughout the codebase.
+constexpr uint32_t operator|(Keys lhs, uint32_t rhs) {
+    return static_cast<uint32_t>(lhs) | rhs;
+}
+constexpr uint32_t operator|(Keys lhs, Keys rhs) {
+    return static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs);
+}
+
+} // namespace nctui

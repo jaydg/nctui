@@ -1,0 +1,103 @@
+//
+// Simple notcurses-based GUI toolkit: progress bar
+//
+// Copyright 2017 Microsoft Corp
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <cstdint>
+#include <algorithm>
+
+export module nctui:progressbar;
+import :widget;
+import :globals;
+
+export namespace nctui {
+
+/// Progress bar can indicate progress of an activity visually.
+///
+/// The progress bar can operate in two modes: percentage mode, or activity
+/// mode. The progress bar starts in percentage mode and setting the fraction
+/// property will reflect on the UI the progress made so far. Activity mode
+/// is used when the application has no way of knowing how much time is left,
+/// and is started when you invoke the pulse() method. You should call the
+/// pulse() method repeatedly as your application makes progress.
+class ProgressBar : public Widget {
+private:
+    float _fraction   = 0.0f;
+    bool  isActivity  = false;
+    int   activityPos = 0;
+    int   delta       = 1;
+
+public:
+    /// Initialises a new instance of the ProgressBar class, starts in
+    /// percentage mode with fraction set to 0.
+    ProgressBar(int x, int y, int w) : Widget(x, y, w, 1) {
+        canFocus(false);
+        _fraction = 0.0f;
+    }
+
+    /// Gets the progress indicator fraction to display.
+    ///
+    /// The value is between 0 and 1.
+    float fraction() const { return _fraction; }
+
+    /// Sets the progress indicator fraction to display.
+    ///
+    /// The value must be between 0 and 1. Setting this property switches
+    /// the progress bar back to percentage mode if it was in activity mode.
+    void fraction(float value) {
+        _fraction  = value;
+        isActivity = false;
+
+        redraw();
+    }
+
+    /// Notifies the progress bar that some progress has taken place.
+    ///
+    /// If the ProgressBar is in percentage mode, it switches to activity
+    /// mode. If it is in activity mode, the marker is moved. You should
+    /// call this method repeatedly as your application makes progress.
+    void pulse() {
+        if (!isActivity) {
+            isActivity  = true;
+            activityPos = 0;
+            delta       = 1;
+        } else {
+            activityPos += delta;
+
+            // Bounce the marker back when it reaches either edge.
+            if (activityPos < 0) {
+                activityPos = 1;
+                delta       = 1;
+            } else if (activityPos >= width) {
+                activityPos = width - 2;
+                delta       = -1;
+            }
+        }
+
+        redraw();
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        plane->set_channels(colorHotFocus());
+
+        if (isActivity) {
+            for (int i = 0; i < width; ++i)
+                plane->putstr(y, x + i, i == activityPos ? "▒" : " ");
+        } else {
+            int mid = static_cast<int>(_fraction * width);
+            for (int i = 0; i < width; ++i)
+                plane->putstr(y, x + i, i < mid ? "▒" : " ");
+        }
+    }
+};
+
+} // namespace nctui

@@ -1,0 +1,282 @@
+//
+// Simple notcurses-based GUI toolkit, widget base class
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <cstdint>
+#include <memory>
+#include <string>
+
+export module nctui:widget;
+
+import :globals;
+
+export namespace nctui {
+
+    /// Forward declaration — full definition is in :container.
+    class Container;
+
+    /// Controls how a widget expands to fill available space.
+    ///
+    /// To fill both horizontally and vertically, combine the values:
+    ///     fill = Fill::Horizontal | Fill::Vertical
+    enum class Fill : uint8_t {
+        None       = 0,        ///< No fill — the widget keeps its fixed size.
+        Horizontal = 1 << 0,  ///< Expand to fill the container width.
+        Vertical   = 1 << 1   ///< Expand to fill the container height.
+    };
+
+    constexpr Fill operator|(Fill lhs, Fill rhs) {
+        return static_cast<Fill>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+    }
+    constexpr Fill operator&(Fill lhs, Fill rhs) {
+        return static_cast<Fill>(static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
+    }
+
+    /// Base class for all nctui widgets.
+    ///
+    /// Provides the shared interface (redraw, event dispatch, focus,
+    /// sizing) that all concrete widgets implement or inherit.
+    class Widget : public std::enable_shared_from_this<Widget> {
+    public:
+        /// Absolute terminal X position (set by container before each redraw).
+        int x = 0;
+        /// Absolute terminal Y position (set by container before each redraw).
+        int y = 0;
+        /// Width of the widget in terminal columns.
+        int width  = 0;
+        /// Height of the widget in terminal rows.
+        int height = 0;
+
+        /// Fill setting — see Fill enum.
+        Fill fill = Fill::None;
+
+        /// Points to the container hosting this widget, or nullptr.
+        Container* container = nullptr;
+
+        Widget(int x, int y, int w, int h) : x(x), y(y), width(w), height(h) {}
+        virtual ~Widget() = default;
+
+        // ----------------------------------------------------------------
+        // canFocus / hasFocus
+        // ----------------------------------------------------------------
+    private:
+        bool _canFocus = false;
+        bool _hasFocus = false;
+
+    public:
+        /// Returns true if this widget can receive keyboard focus.
+        bool canFocus() const { return _canFocus; }
+
+        /// Sets whether this widget can receive keyboard focus.
+        void canFocus(bool v);
+
+        /// Returns true if this widget currently has keyboard focus.
+        bool hasFocus() const { return _hasFocus; }
+
+        /// Sets the focus state. Setting to true calls redraw() so the
+        /// widget can update its appearance immediately (D original behaviour).
+        virtual void setFocus(bool v);
+
+        // ----------------------------------------------------------------
+        // Colour accessors
+        //
+        // Delegate to the host container's containerColor* fields when a
+        // container is set, so a widget inside a Dialog automatically uses
+        // dialog colours. Falls back to the global application palette when
+        // container is null.
+        // ----------------------------------------------------------------
+
+        /// Colour for rendering this widget in the unfocused state.
+        virtual uint64_t colorNormal()    const;
+        /// Colour for rendering this widget in the focused state.
+        virtual uint64_t colorFocus()     const;
+        /// Colour for rendering the hot key in the unfocused state.
+        virtual uint64_t colorHotNormal() const;
+        /// Colour for rendering the hot key in the focused state.
+        virtual uint64_t colorHotFocus()  const;
+
+
+        // ----------------------------------------------------------------
+        // Virtual interface
+        // ----------------------------------------------------------------
+
+        /// Redraws the widget. Must be overridden by every concrete widget.
+        ///
+        /// Widgets are responsible for painting their entire allocated region.
+        virtual void redraw() = 0;
+
+        /// Moves the terminal cursor to the widget's natural cursor position.
+        ///
+        /// Should be overridden by widgets that have a meaningful cursor
+        /// position (Entry, CheckBox, …). The default implementation places
+        /// the cursor at the widget's top-left corner (x, y).
+        virtual void positionCursor();
+
+        /// Called when the terminal is resized. Override to adjust layout.
+        virtual void doSizeChanged() {}
+
+        /// Called before keys are dispatched to the focused widget, giving
+        /// all widgets a chance to handle global accelerators (Alt-key).
+        ///
+        /// Return true to consume the keystroke, false to pass it on.
+        virtual bool processHotKey(char32_t ch)  { return false; }
+
+        /// Called when this widget is focused and a key is pressed.
+        ///
+        /// Return true to consume the keystroke, false to pass it on.
+        virtual bool processKey(char32_t ch)      { return false; }
+
+        /// Called after normal key dispatch, allowing default-button-style
+        /// handling (e.g. Enter activates the default button even when it
+        /// does not have focus).
+        ///
+        /// Return true to consume the keystroke, false to pass it on.
+        virtual bool processColdKey(char32_t ch)  { return false; }
+
+        /// Called when a mouse event occurs within the widget's bounds.
+        virtual void processMouse(const ncinput* ev) {}
+
+        // ----------------------------------------------------------------
+        // Utility helpers
+        // ----------------------------------------------------------------
+
+        /// Clears the widget's region by filling it with spaces.
+        ///
+        /// Uses the colour that was last set on the plane, so call
+        /// set_channels() before clear() if you need a specific background.
+        void clear();
+
+        /// Draws a Unicode box-drawing frame at the given position.
+        ///
+        /// If fillInside is true, the interior is filled with spaces (useful
+        /// for dialog backgrounds).
+        static void drawFrame(ncpp::Plane* plane,
+                              int col, int line, int fw, int fh,
+                              bool fillInside = false);
+
+        /// Draws a string with the character following '_' rendered in
+        /// hotColor and the remaining characters in normalColor.
+        ///
+        /// This is the standard hot-key rendering used by Button, RadioGroup,
+        /// MenuBar, and others.
+        static void drawHotString(ncpp::Plane* plane, int row, int col,
+                                  const std::string& s,
+                                  uint32_t hotColor, uint32_t normalColor);
+    };
+
+} // export namespace nctui
+
+// -----------------------------------------------------------------------
+// Method definitions
+//
+// All non-trivial method bodies are placed outside the class definition
+// so that Clang emits exactly one definition per translation unit into
+// the shared library, avoiding "undefined reference" linker errors that
+// arise when every importer of the BMI expects a canonical symbol.
+// -----------------------------------------------------------------------
+
+namespace nctui {
+
+void Widget::canFocus(bool v) { _canFocus = v; }
+
+void Widget::setFocus(bool v) {
+    _hasFocus = v;
+    // Do NOT call redraw() here. The container's set_focused() is responsible
+    // for triggering a redraw with correct absolute coordinates via
+    // redrawChildren(). Calling redraw() here would use relative coordinates
+    // and visually shift the widget (the "2 rows down" button bug).
+}
+
+uint64_t Widget::colorNormal()    const {
+    return (container && nctui::widget_colors::getNormal)
+        ? nctui::widget_colors::getNormal(container)
+        : nctui::application::colorNormal;
+}
+uint64_t Widget::colorFocus()     const {
+    return (container && nctui::widget_colors::getFocus)
+        ? nctui::widget_colors::getFocus(container)
+        : nctui::application::colorFocus;
+}
+uint64_t Widget::colorHotNormal() const {
+    return (container && nctui::widget_colors::getHotNormal)
+        ? nctui::widget_colors::getHotNormal(container)
+        : nctui::application::colorHotNormal;
+}
+uint64_t Widget::colorHotFocus()  const {
+    return (container && nctui::widget_colors::getHotFocus)
+        ? nctui::widget_colors::getHotFocus(container)
+        : nctui::application::colorHotFocus;
+}
+
+void Widget::positionCursor() {
+    ncpp::Plane* plane = nctui::application::std_plane;
+    if (plane) plane->cursor_move(y, x);
+}
+
+void Widget::clear() {
+    ncpp::Plane* plane = nctui::application::std_plane;
+    if (!plane) return;
+    std::string blank(width, ' ');
+
+    for (int line = 0; line < height; ++line)
+        plane->putstr(y + line, x, blank.c_str());
+}
+
+void Widget::drawFrame(ncpp::Plane* plane,
+                       int col, int line, int fw, int fh,
+                       bool fillInside)
+{
+    if (!plane || fw < 2 || fh < 2) return;
+
+    plane->putstr(line, col, "┌");
+
+    for (int b = 1; b < fw - 1; ++b)
+        plane->putstr(line, col + b, "─");
+    plane->putstr(line, col + fw - 1, "┐");
+
+    for (int b = 1; b < fh - 1; ++b) {
+        plane->putstr(line + b, col, "│");
+
+        if (fillInside) {
+            std::string inner(fw - 2, ' ');
+            plane->putstr(line + b, col + 1, inner.c_str());
+        }
+
+        plane->putstr(line + b, col + fw - 1, "│");
+    }
+
+    plane->putstr(line + fh - 1, col, "└");
+    for (int b = 1; b < fw - 1; ++b)
+        plane->putstr(line + fh - 1, col + b, "─");
+
+    plane->putstr(line + fh - 1, col + fw - 1, "┘");
+}
+
+void Widget::drawHotString(ncpp::Plane* plane, int row, int col,
+                           const std::string& s,
+                           uint32_t hotColor, uint32_t normalColor)
+{
+    if (!plane) return;
+    auto setColor = [&](uint64_t channels) {
+            plane->set_channels(channels);
+        };
+
+    bool nextIsHot = false;
+    int  c = col;
+    for (unsigned char ch : s) {
+        if (ch == '_') { nextIsHot = true; continue; }
+        setColor(nextIsHot ? hotColor : normalColor);
+        char buf[2] = { static_cast<char>(ch), 0 };
+        plane->putstr(row, c++, buf);
+        nextIsHot = false;
+    }
+}
+
+} // namespace nctui

@@ -1,0 +1,117 @@
+//
+// Simple notcurses-based GUI toolkit, message box dialogue
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <string>
+#include <vector>
+#include <memory>
+#include <algorithm>
+
+export module nctui:messagebox;
+import :dialog;
+import :button;
+import :label;
+import :application;
+
+// -----------------------------------------------------------------------
+// nctui::messagebox::query
+// -----------------------------------------------------------------------
+
+export namespace nctui::messagebox {
+
+/// Creates a message box with the given title, displays the message, and
+/// creates buttons with the given string labels.
+///
+/// The dialog is run modally and blocks until one of the buttons is
+/// clicked. Returns the zero-based index of the clicked button, or -1 if
+/// the dialog was closed without a button click.
+inline int query(int width, int height, const std::string& title,
+                 const std::string& message,
+                 const std::vector<std::string>& buttons)
+{
+    auto dialog = std::make_shared<Dialog>(width, height, title);
+    int clicked_index = -1;
+    int counter       = 0;
+
+    for (const auto& btn_text : buttons) {
+        auto btn = std::make_shared<Button>(btn_text);
+        // Capture counter by value so each button closure holds its own index.
+        btn->clicked = [&clicked_index, counter, dialog]() mutable {
+            clicked_index = counter;
+            dialog->running = false;
+        };
+
+        dialog->addButton(btn);
+        ++counter;
+    }
+
+    if (!message.empty()) {
+        int lx = (width - 4 - static_cast<int>(message.length())) / 2;
+        dialog->add(std::make_shared<Label>(lx, 2, message));
+    }
+
+    nctui::application::run(dialog);
+    return clicked_index;
+}
+
+} // namespace nctui::messagebox
+
+// -----------------------------------------------------------------------
+// nctui::application::msg / error / info
+//
+// These are placed here rather than in application.mpp because they
+// depend on Dialog, Label, and Button — importing those from application.mpp
+// would create a circular module dependency
+// (:dialog → :application → :dialog).
+// Placing the implementation here keeps the dependency graph acyclic:
+//   :messagebox → :dialog → :globals
+//   :messagebox → :application → :globals
+// -----------------------------------------------------------------------
+
+export namespace nctui::application {
+
+/// Displays a modal message box with the given caption and text.
+///
+/// The dialog is sized to fit both the caption and the text. If is_error
+/// is true, the dialog uses the error colour scheme (mirrors the D
+/// original's Application.msg(bool error, …)).
+inline void msg(bool is_error, const std::string& caption,
+                const std::string& text)
+{
+    int dlg_w = std::max(
+        static_cast<int>(caption.length()) + 8,
+        static_cast<int>(text.length())    + 8);
+    int dlg_h = 7;
+
+    auto d = std::make_shared<Dialog>(dlg_w, dlg_h, caption);
+    if (is_error) d->errorColors();
+
+    if (!text.empty()) {
+        int lx = (dlg_w - 4 - static_cast<int>(text.length())) / 2;
+        d->add(std::make_shared<Label>(lx, 1, text));
+    }
+
+    auto ok = std::make_shared<Button>("OK");
+    ok->clicked = [&d_running = d->running]() { d_running = false; };
+    d->addButton(ok);
+
+    run(d);
+}
+
+/// Displays an error message box.
+inline void error(const std::string& caption, const std::string& text) {
+    msg(true, caption, text);
+}
+
+/// Displays an informational message box.
+inline void info(const std::string& caption, const std::string& text) {
+    msg(false, caption, text);
+}
+
+} // namespace nctui::application

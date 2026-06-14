@@ -1,0 +1,57 @@
+//
+// Simple notcurses-based GUI toolkit, helper functions
+//
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <string>
+#include <string_view>
+
+export module nctui:utils;
+
+export namespace nctui::utils {
+
+/// Returns the byte index of the n-th UTF-8 codepoint in str.
+///
+/// Used internally by the substring helpers to translate codepoint-based
+/// positions into the byte offsets that std::string_view::substr requires.
+inline std::size_t utf8_to_byte_index(std::string_view str, std::size_t char_pos) {
+    std::size_t byte_idx  = 0;
+    std::size_t char_count = 0;
+    while (byte_idx < str.size() && char_count < char_pos) {
+        unsigned char c = static_cast<unsigned char>(str[byte_idx]);
+        if      (c < 0x80)            byte_idx += 1;
+        else if ((c & 0xE0) == 0xC0)  byte_idx += 2;
+        else if ((c & 0xF0) == 0xE0)  byte_idx += 3;
+        else if ((c & 0xF8) == 0xF0)  byte_idx += 4;
+        else                          byte_idx += 1; // invalid UTF-8 byte: skip
+        ++char_count;
+    }
+
+    return byte_idx;
+}
+
+/// Creates a substring of str starting at the given codepoint position.
+///
+/// Unlike std::string::substr, which operates on byte indices, this function
+/// counts UTF-8 codepoints so that multi-byte characters are treated as
+/// single units.
+inline std::string substring(std::string_view str, std::size_t start) {
+    std::size_t byte_start = utf8_to_byte_index(str, start);
+    return std::string(str.substr(byte_start));
+}
+
+/// Creates a substring of str of the given codepoint length starting at start.
+///
+/// Both start and length are codepoint counts, not byte counts.
+inline std::string substring(std::string_view str, std::size_t start, std::size_t length) {
+    std::size_t byte_start = utf8_to_byte_index(str, start);
+    std::size_t byte_end   = utf8_to_byte_index(str, start + length);
+
+    return std::string(str.substr(byte_start, byte_end - byte_start));
+}
+
+} // namespace nctui::utils

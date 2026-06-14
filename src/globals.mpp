@@ -1,0 +1,143 @@
+//
+// Simple notcurses-based GUI toolkit
+//
+// Copyright (C) 2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+
+// Global state variables shared between the application driver and widgets.
+//
+// This partition has no dependencies on other nctui partitions — it exists
+// precisely to break the import cycle that would otherwise arise from:
+//   :application → :container → :widget → :application
+//
+// Any value that both :application (writer) and widget partitions (readers)
+// need must live here rather than in :application.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <cstdint>
+#include <functional>
+
+export module nctui:globals;
+
+export namespace nctui::application {
+
+    // ----------------------------------------------------------------
+    // Terminal geometry — written by application::init() and updated on
+    // each NCKEY_RESIZE event. Read by Dialog and other layout code.
+    // ----------------------------------------------------------------
+
+    inline unsigned _cols  = 0;
+    inline unsigned _lines = 0;
+
+    /// Returns the current terminal width in columns.
+    inline int cols()  { return static_cast<int>(_cols);  }
+
+    /// Returns the current terminal height in lines.
+    inline int lines() { return static_cast<int>(_lines); }
+
+    // ----------------------------------------------------------------
+    // Rendering
+    // ----------------------------------------------------------------
+
+    /// The notcurses standard plane. Written by application::init().
+    inline ncpp::Plane* std_plane = nullptr;
+
+    // ----------------------------------------------------------------
+    // Colour palette — stored as notcurses uint64_t channel pairs.
+    //
+    // Uses NCCHANNELS_INITIALIZER(fr,fg,fb, br,bg,bb) which is the
+    // officially supported way to construct channel pairs at compile time.
+    // Direct bit manipulation of channels is explicitly discouraged by the
+    // notcurses documentation ("likely to lead to strange and infrequent
+    // failures").
+    //
+    // The values mirror the D original's makeColor(fg, bg) pairs:
+    //   colorNormal       WHITE   on BLUE
+    //   colorFocus        BLACK   on CYAN
+    //   colorHotNormal    YELLOW  on BLUE
+    //   colorHotFocus     YELLOW  on CYAN
+    //   colorDialogNormal BLACK   on WHITE
+    //   colorDialogFocus  BLACK   on CYAN
+    //   colorError        WHITE   on RED
+    //   colorErrorFocus   BLACK   on WHITE
+    // ----------------------------------------------------------------
+
+    /// White on blue — normal unfocused widget colour.
+    inline uint64_t colorNormal       = NCCHANNELS_INITIALIZER(0xFF,0xFF,0xFF, 0x00,0x00,0xAA);
+    /// Black on cyan — focused widget colour.
+    inline uint64_t colorFocus        = NCCHANNELS_INITIALIZER(0x00,0x00,0x00, 0x00,0xAA,0xAA);
+    /// Yellow on blue — hot key in unfocused widget.
+    inline uint64_t colorHotNormal    = NCCHANNELS_INITIALIZER(0xFF,0xFF,0x55, 0x00,0x00,0xAA);
+    /// Yellow on cyan — hot key in focused widget.
+    inline uint64_t colorHotFocus     = NCCHANNELS_INITIALIZER(0xFF,0xFF,0x55, 0x00,0xAA,0xAA);
+    /// Black on white — normal unfocused widget on a dialog.
+    inline uint64_t colorDialogNormal    = NCCHANNELS_INITIALIZER(0x00,0x00,0x00, 0xFF,0xFF,0xFF);
+    /// Black on cyan — focused widget on a dialog.
+    inline uint64_t colorDialogFocus     = NCCHANNELS_INITIALIZER(0x00,0x00,0x00, 0x00,0xAA,0xAA);
+    /// Blue on white — hot key in unfocused dialog widget (D: makeColor(COLOR_BLUE, COLOR_WHITE)).
+    inline uint64_t colorDialogHotNormal = NCCHANNELS_INITIALIZER(0x00,0x00,0xFF, 0xFF,0xFF,0xFF);
+    /// Blue on cyan — hot key in focused dialog widget (D: makeColor(COLOR_BLUE, COLOR_CYAN)).
+    inline uint64_t colorDialogHotFocus  = NCCHANNELS_INITIALIZER(0x00,0x00,0xFF, 0x00,0xAA,0xAA);
+
+    // Menu colours
+    //   colorMenu            white  on cyan
+    //   colorMenuHot         yellow on cyan
+    //   colorMenuSelected    white  on black
+    //   colorMenuHotSelected yellow on black
+    /// White on cyan — normal menu entry.
+    inline uint64_t colorMenu            = NCCHANNELS_INITIALIZER(0xFF,0xFF,0xFF, 0x00,0xAA,0xAA);
+    /// Yellow on cyan — hot key in a normal menu entry.
+    inline uint64_t colorMenuHot         = NCCHANNELS_INITIALIZER(0xFF,0xFF,0x55, 0x00,0xAA,0xAA);
+    /// White on black — selected menu entry.
+    inline uint64_t colorMenuSelected    = NCCHANNELS_INITIALIZER(0xFF,0xFF,0xFF, 0x00,0x00,0x00);
+    /// Yellow on black — hot key in a selected menu entry.
+    inline uint64_t colorMenuHotSelected = NCCHANNELS_INITIALIZER(0xFF,0xFF,0x55, 0x00,0x00,0x00);
+    /// White on red — error dialog colour.
+    inline uint64_t colorError        = NCCHANNELS_INITIALIZER(0xFF,0xFF,0xFF, 0xAA,0x00,0x00);
+    /// Black on white — focused widget on an error dialog.
+    inline uint64_t colorErrorFocus   = NCCHANNELS_INITIALIZER(0x00,0x00,0x00, 0xFF,0xFF,0xFF);
+
+    // ----------------------------------------------------------------
+    // Iteration callback
+    // ----------------------------------------------------------------
+
+    /// Optional callback invoked by runLoop() on each main-loop iteration.
+    inline std::function<void()> iterationCallback;
+
+    // ----------------------------------------------------------------
+    // Cursor visibility helpers
+    //
+    // Widgets that host a text cursor (Entry, TextView) call these to
+    // show or hide the terminal cursor when focus changes. The actual
+    // notcurses context pointer lives in :application; these callbacks
+    // let :globals bridge the gap without a circular import.
+    // ----------------------------------------------------------------
+
+    /// Shows the terminal cursor at the given row/col.
+    ///
+    /// Calls notcurses_cursor_enable which both makes the cursor visible
+    /// and positions it in one step. Widgets call this from positionCursor()
+    /// with their actual editing-point coordinates.
+    inline std::function<void(int row, int col)> cursor_show;
+
+    /// Hides the terminal hardware cursor. Set by application::init().
+    inline std::function<void()> cursor_hide;
+
+} // namespace nctui::application
+
+// -----------------------------------------------------------------------
+// Widget colour delegation — stored outside nctui::application to avoid
+// a circular namespace dependency.
+// Set by container.mpp at module load time.
+// -----------------------------------------------------------------------
+namespace nctui::widget_colors {
+    /// Returns the containerColorNormal of a Container, or 0 if null.
+    inline std::function<uint64_t(const void*)> getNormal;
+    inline std::function<uint64_t(const void*)> getFocus;
+    inline std::function<uint64_t(const void*)> getHotNormal;
+    inline std::function<uint64_t(const void*)> getHotFocus;
+}

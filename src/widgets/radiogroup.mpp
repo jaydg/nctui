@@ -1,0 +1,196 @@
+//
+// Simple notcurses-based GUI toolkit: radio group widget
+//
+// Copyright 2017 Microsoft Corp
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+
+export module nctui:radiogroup;
+import :widget;
+import :globals;
+import :container;
+
+export namespace nctui {
+
+/// Radio group: shows a group of labels, only one of which can be selected
+/// at a given time.
+class RadioGroup : public Widget {
+private:
+    int _selected = 0;
+    std::vector<std::string> _radioLabels;
+
+    // Parse the hot key from a label string: the character following '_'
+    // becomes the hot key (same '_' prefix convention as MenuBar).
+    static char32_t parseHotKey(const std::string& label) {
+        bool nextIsHot = false;
+        for (unsigned char c : label) {
+            if (c == '_') { nextIsHot = true; continue; }
+            if (nextIsHot) return std::toupper(c);
+            nextIsHot = false;
+        }
+        return 0;
+    }
+
+    static void setColor(ncpp::Plane* plane, uint32_t fg) {
+        plane->set_channels(fg);
+    }
+
+public:
+    int cursor = 0;
+
+    /// Raised when the selected item changes. The argument is the new index.
+    std::function<void(int)> changed;
+
+    /// Initializes a new RadioGroup at (x, y) with the given labels.
+    ///
+    /// The strings in radioLabels can contain hot keys by placing an
+    /// underscore ("_") before the desired hot key character.
+    /// The selected parameter sets the initially selected item; it is
+    /// clamped to the number of items.
+    RadioGroup(int x, int y, const std::vector<std::string>& labels, int selected = 0)
+        : Widget(x, y, 0, 0)
+    {
+        canFocus(true);
+        radioLabels(labels);
+        // clamp initial selection
+        _selected = (selected >= 0 && selected < static_cast<int>(_radioLabels.size()))
+                    ? selected : 0;
+        cursor = _selected;
+    }
+
+    /// Returns the radio labels.
+    const std::vector<std::string>& radioLabels() const { return _radioLabels; }
+
+    /// Sets the radio labels, resets the selection to 0.
+    void radioLabels(const std::vector<std::string>& labels) {
+        _radioLabels = labels;
+        _selected = 0;
+        cursor    = 0;
+
+        int max_w = 0;
+        for (const auto& s : _radioLabels)
+            max_w = std::max(max_w, static_cast<int>(s.length()));
+        // 4 = width of "(o) " prefix (underscore chars don't count towards display width)
+        width  = 4 + max_w;
+        height = static_cast<int>(_radioLabels.size());
+
+        redraw();
+    }
+
+    /// Returns the index of the currently selected item.
+    int selected() const { return _selected; }
+
+    /// Sets the currently selected item and fires the changed callback.
+    void selected(int idx) {
+        if (idx < 0 || idx >= static_cast<int>(_radioLabels.size())) return;
+        _selected = idx;
+        if (changed) changed(idx);
+        redraw();
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        for (int i = 0; i < static_cast<int>(_radioLabels.size()); ++i) {
+            uint64_t normalColor, hotColor;
+            if (i == _selected) {
+                normalColor = colorFocus();
+                hotColor    = colorHotFocus();
+            } else {
+                normalColor = colorNormal();
+                hotColor    = colorHotNormal();
+            }
+
+            // Radio symbol in the container's normal colour (no highlight).
+            setColor(plane, colorNormal());
+            plane->putstr(y + i, x, i == _selected ? "(o) " : "( ) ");
+
+            // Label background: fill label area with the row colour first.
+            setColor(plane, normalColor);
+            int labelWidth = static_cast<int>(_radioLabels[i].length());
+            std::string blank(width - 4, ' ');
+            plane->putstr(y + i, x + 4, blank.c_str());
+
+            // Label with hot-key highlighting.
+            drawHotString(plane, y + i, x + 4, _radioLabels[i], hotColor, normalColor);
+        }
+
+        positionCursor();
+    }
+
+    /// Positions the cursor on the current (cursor) row.
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (plane) plane->cursor_move(y + cursor, x + 1);
+    }
+
+    bool processKey(char32_t key) override {
+        switch (key) {
+            case NCKEY_UP:
+                if (cursor > 0) { cursor--; redraw(); return true; }
+                break;
+            case NCKEY_DOWN:
+                if (cursor + 1 < static_cast<int>(_radioLabels.size())) {
+                    cursor++; redraw(); return true;
+                }
+                break;
+            case ' ':
+                selected(cursor);
+                return true;
+        }
+
+        return false;
+    }
+
+    /// Handles global hot-key activation: an alphanumeric key matching the
+    /// underscored hot character in a label selects that item, even when
+    /// the RadioGroup does not have focus.
+    bool processColdKey(char32_t key) override {
+        if (!std::isalnum(static_cast<unsigned char>(key))) return false;
+        char32_t upper = std::toupper(static_cast<unsigned char>(key));
+        for (int i = 0; i < static_cast<int>(_radioLabels.size()); ++i) {
+            if (parseHotKey(_radioLabels[i]) == upper) {
+                selected(i);
+                cursor = i;
+                if (!hasFocus() && container)
+                    container->set_focused(shared_from_this());
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev || !container) return;
+        int rel_y = ev->y - y;
+        if (rel_y < 0 || rel_y >= static_cast<int>(_radioLabels.size())) return;
+
+        if (ev->evtype == NCTYPE_PRESS || ev->evtype == NCTYPE_UNKNOWN) {
+            // On press: move focus and update the cursor highlight.
+            container->set_focused(shared_from_this());
+            cursor = rel_y;
+            redraw();
+        } else if (ev->evtype == NCTYPE_RELEASE) {
+            // On release: commit the selection and fire the callback.
+            _selected = rel_y;
+            cursor    = rel_y;
+            if (changed) changed(_selected);
+            redraw();
+        }
+    }
+};
+
+} // namespace nctui

@@ -1,0 +1,300 @@
+//
+// Simple notcurses-based GUI toolkit, application driver
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+// Before using nctui, call application::init(), then create your top-level
+// container (typically:
+//     auto c = std::make_shared<Container>(0, 0, cols(), lines());
+// add widgets to it, and call application::run(c).
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <clocale>
+#include <functional>
+#include <vector>
+#include <memory>
+#include <string>
+#include <iostream>
+#include <stdexcept>
+
+export module nctui:application;
+import :mainloop;
+import :keys;
+import :container;
+import :globals;
+
+export namespace nctui::application {
+
+// -----------------------------------------------------------------------
+// Internal state (not exposed in :globals because it is private to the
+// application driver and not needed by individual widgets).
+// _cols, _lines and cols()/lines() are now in :globals so that :dialog
+// and other widgets can read terminal geometry without importing :application.
+// -----------------------------------------------------------------------
+
+/// The NotCurses context for the entire application.
+inline std::unique_ptr<ncpp::NotCurses> nc = nullptr;
+
+/// The application's main loop instance.
+inline std::shared_ptr<MainLoop> mainLoop = nullptr;
+
+/// Stack of active top-level containers (dialogs are pushed on top).
+inline std::vector<std::shared_ptr<Container>> toplevels;
+
+inline bool inited = false;
+
+// Forward declarations (refresh and handleInput call each other indirectly
+// through the container hierarchy).
+// -----------------------------------------------------------------------
+inline void refresh();
+inline bool handleInput();
+
+// -----------------------------------------------------------------------
+// Core rendering
+// -----------------------------------------------------------------------
+
+/// Forces a repaint of all active top-level containers and renders the
+/// accumulated output to the terminal.
+inline void refresh() {
+    if (!nc) return;
+    for (auto& c : toplevels) c->redraw();
+    nc->render();
+}
+
+// -----------------------------------------------------------------------
+// Input handling
+// -----------------------------------------------------------------------
+
+/// Drains all pending notcurses input events without blocking.
+///
+/// Called by the MainLoop watch registered on the notcurses input fd.
+/// Handles resize (NCKEY_RESIZE), mouse events, and keyboard input.
+/// Terminal resize is handled by notcurses itself via a synthesised
+/// NCKEY_RESIZE event — no SIGWINCH handler is needed.
+///
+/// Key dispatch follows the same three-phase protocol as the D original:
+///   1. processHotKey  — global accelerators (Alt-key combinations)
+///   2. processKey     — normal key handling for the focused widget
+///   3. processColdKey — cold accelerators (e.g. Enter on default buttons)
+///
+/// In addition, Tab and Shift-Tab cycle the focus, and Ctrl-C stops the
+/// current top-level container's run loop.
+inline bool handleInput() {
+    if (!nc) return true;
+
+    ncinput ni;
+    struct timespec deadline = {0, 0};   // non-blocking poll
+    uint32_t id;
+
+    while ((id = ::notcurses_get(*nc, &deadline, &ni)) != 0) {
+        if (id == static_cast<uint32_t>(-1)) break;
+
+        // Terminal was resized: let notcurses update its geometry, then
+        // propagate sizeChanged() through the container hierarchy.
+        if (id == NCKEY_RESIZE) {
+            ::notcurses_refresh(*nc, &_lines, &_cols);
+            for (auto& c : toplevels) c->sizeChanged();
+            refresh();
+            continue;
+        }
+
+        if (toplevels.empty()) continue;
+        auto& top = toplevels.back();
+
+        if (::nckey_mouse_p(id)) {
+            top->processMouse(&ni);
+            refresh();
+            continue;
+        }
+
+        // Encode the Alt modifier into the key id so that widgets relying on
+        // isAlt() / the Keys::Alt bit (MenuBar hot keys, Entry word motions)
+        // see it. notcurses reports Alt in the separate ni.alt bool field
+        // (use ncinput_alt_p), not in ni.id, so we fold it in here.
+        uint32_t key = ni.id;
+        if (ni.alt)
+            key |= static_cast<uint32_t>(Keys::Alt);
+
+        // Three-phase keyboard dispatch.
+        // After any successful dispatch, call refresh() to flush the
+        // notcurses render buffer to the terminal. Individual widget
+        // redraw() calls write into the buffer but do not call nc->render().
+        bool handled = false;
+
+        if (top->processHotKey(key))       handled = true;
+        else if (top->processKey(key))     handled = true;
+        else if (top->processColdKey(key)) handled = true;
+
+        // Ctrl-C — stop the current run loop
+        else if (ni.id == static_cast<uint32_t>(Keys::CtrlC)) {
+            top->running = false;
+            handled = true;
+        }
+
+        // Tab / Shift-Tab — cycle focus
+        else if (ni.id == static_cast<uint32_t>(Keys::Tab)) {
+            if (!top->focusNext()) top->focusNext();
+            handled = true;
+        }
+        else if (ni.id == static_cast<uint32_t>(Keys::ShiftTab)) {
+            if (!top->focusPrev()) top->focusPrev();
+            handled = true;
+        }
+
+        if (handled) refresh();
+    }
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Initialisation
+// -----------------------------------------------------------------------
+
+/// Initialises the notcurses runtime and the application main loop.
+///
+/// Must be called before any other nctui function. Subsequent calls are
+/// no-ops. The user's locale is set automatically.
+inline void init() {
+    if (inited) return;
+    inited = true;
+
+    std::setlocale(LC_ALL, "");
+
+    notcurses_options options{};
+    options.flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_NO_ALTERNATE_SCREEN;
+
+    try {
+        nc      = std::make_unique<ncpp::NotCurses>(options);
+        std_plane = nc->get_stdplane();   // exposed via :globals
+        nc->get_term_dim(_lines, _cols);
+    } catch (const std::exception& e) {
+        std::cerr << "nctui: failed to initialise notcurses: " << e.what() << '\n';
+        exit(1);
+    }
+
+    // Enable mouse reporting. Requires a broker (GPM, Wayland, or X11);
+    // failure here is non-fatal — the application simply has no mouse support.
+    // Enable button and drag events but NOT move events (NCMICE_MOVE_EVENT).
+    // Move events arrive with NCTYPE_UNKNOWN and are indistinguishable from
+    // button presses in many terminals, causing hover to appear as a click.
+    ::notcurses_mice_enable(*nc, NCMICE_BUTTON_EVENT | NCMICE_DRAG_EVENT);
+
+    cursor_show = [](int row, int col) {
+        if (nc) ::notcurses_cursor_enable(*nc, row, col);
+    };
+    cursor_hide = []() {
+        if (nc) ::notcurses_cursor_disable(*nc);
+    };
+
+    mainLoop = std::make_shared<MainLoop>();
+
+    // Register the notcurses input fd with the main loop so that keyboard,
+    // mouse, and resize events are all delivered through handleInput().
+    mainLoop->addWatch(::notcurses_inputready_fd(*nc),
+                       MainLoop::Condition::PollIn,
+                       handleInput);
+}
+
+/// Shuts down the notcurses context. Called automatically when the last
+/// top-level container is removed.
+inline void shutdown() { nc.reset(); }
+
+// -----------------------------------------------------------------------
+// Run loop
+// -----------------------------------------------------------------------
+
+/// Starts running a new container or dialog box.
+///
+/// Use this method if you want to control the main loop execution manually
+/// by calling runLoop (for example, to start a dialog while continuing to
+/// process events in parallel).
+///
+/// Use the returned RunState as the argument to runLoop and later to end()
+/// to remove the container from the screen.
+inline std::shared_ptr<RunState> begin(std::shared_ptr<Container> container) {
+    if (!container) throw std::runtime_error("container cannot be null");
+    init();
+
+    toplevels.push_back(container);
+    container->prepare();
+    container->sizeChanged();
+    container->focusFirst();
+    refresh();
+
+    return std::make_shared<RunState>(container);
+}
+
+/// Runs the main loop for the given run state.
+///
+/// Blocks until the container's running flag is cleared (typically by a
+/// button callback setting container->running = false). Set wait to false
+/// for a non-blocking, single-iteration call.
+inline void runLoop(std::shared_ptr<RunState> state, bool wait = true) {
+    if (!state || !state->container) return;
+
+    state->container->running = true;
+    while (state->container->running) {
+        if (mainLoop->eventsPending(wait)) {
+            mainLoop->mainIteration();
+            if (iterationCallback) iterationCallback();
+        } else if (!wait) {
+            return;
+        }
+    }
+}
+
+/// Stops the topmost running container's loop and wakes the main loop.
+inline void stop() {
+    if (toplevels.empty()) return;
+    toplevels.back()->running = false;
+    if (mainLoop) mainLoop->stop();
+}
+
+/// Completes an execution started with begin() and removes the container.
+inline void end(std::shared_ptr<RunState> state) {
+    if (state) state->dispose();
+}
+
+/// Internal: removes a container from the toplevel stack. Called from
+/// RunState::dispose().
+inline void end(std::shared_ptr<Container> container) {
+    std::erase(toplevels, container);
+    // Hide the hardware cursor: the closed container may have had a focused
+    // Entry/TextView that enabled it. The newly-revealed top-level will
+    // re-enable the cursor via positionCursor() if it has a text widget.
+    if (cursor_hide) cursor_hide();
+    if (toplevels.empty()) shutdown();
+    else refresh();
+}
+
+
+/// Runs the main loop on the given container.
+///
+/// This is the primary entry point for running the application or a modal
+/// dialog. Equivalent to begin() + runLoop() + end().
+inline void run(std::shared_ptr<Container> container) {
+    auto token = begin(container);
+    runLoop(token);
+    end(token);
+}
+
+} // namespace nctui::application
+
+// Register RunState::dispose callback now that nctui::application::end() is
+// fully defined. An anonymous namespace outside the export block is required
+// because anonymous namespaces cannot be exported.
+namespace {
+    const bool _end_fn_registered = []() {
+        nctui::RunState::end_fn = [](std::shared_ptr<nctui::Container> c) {
+            nctui::application::end(c);
+        };
+
+        return true;
+    }();
+}

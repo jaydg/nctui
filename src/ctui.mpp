@@ -1,0 +1,33 @@
+//
+// Simple notcurses-based GUI toolkit
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+export module nctui;
+
+// Core & Utilities
+export import :globals;
+export import :keys;
+export import :utils;
+export import :mainloop;
+export import :application;
+
+// GUI Widgets
+export import :widget;
+export import :container;
+export import :label;
+export import :trimlabel;
+export import :button;
+export import :checkbox;
+export import :entry;
+export import :frame;
+export import :dialog;
+export import :messagebox;
+export import :progressbar;
+export import :textview;
+export import :listview;
+export import :menubar;
+export import :radiogroup;

@@ -1,0 +1,373 @@
+//
+// Simple notcurses-based GUI toolkit, container widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <vector>
+#include <memory>
+#include <algorithm>
+#include <functional>
+
+export module nctui:container;
+
+import :widget;
+import :globals;
+
+export namespace nctui {
+
+/// Container widget — can host other widgets.
+///
+/// This implements the foundation for all containers (Dialog, Frame, …)
+/// that can host child widgets inside their boundaries. It provides focus
+/// handling, event routing, and size-change propagation.
+class Container : public Widget {
+private:
+    std::vector<std::shared_ptr<Widget>> widgets;
+    std::shared_ptr<Widget>              _focused = nullptr;
+
+public:
+    bool running = false;
+
+    /// Colour used to render unfocused children of this container.
+    uint64_t containerColorNormal    = 0;
+    /// Colour used to render focused children of this container.
+    uint64_t containerColorFocus     = 0;
+    /// Colour used for hot keys in unfocused children.
+    uint64_t containerColorHotNormal = 0;
+    /// Colour used for hot keys in focused children.
+    uint64_t containerColorHotFocus  = 0;
+
+    /// Number of border cells on each side. Child coordinates are relative
+    /// to the inner area; the outer border columns/rows are reserved for
+    /// the frame drawn by subclasses.
+    int border = 0;
+
+    /// Optional callback invoked whenever sizeChanged() is called.
+    ///
+    /// Assign a lambda here to be notified of resize events from outside
+    /// the class hierarchy, e.g. to recompute a custom layout.
+    std::function<void()> onSizeChanged;
+
+    /// Constructs a container at (x, y) with the given width and height.
+    ///
+    /// The container colours are initialised from the global application
+    /// colour palette (matching the D original: Application.color*).
+    Container(int x, int y, int w, int h) : Widget(x, y, w, h) {
+        containerColorNormal    = nctui::application::colorNormal;
+        containerColorFocus     = nctui::application::colorFocus;
+        containerColorHotNormal = nctui::application::colorHotNormal;
+        containerColorHotFocus  = nctui::application::colorHotFocus;
+    }
+
+    // ----------------------------------------------------------------
+    // Lifecycle hooks called by application::begin() and handleInput()
+    // ----------------------------------------------------------------
+
+    /// Called once on the top-level container before the run loop starts.
+    virtual void prepare() {}
+
+    /// Called whenever the terminal is resized. Delegates to doSizeChanged()
+    /// and also fires the onSizeChanged callback if one has been set.
+    virtual void sizeChanged() { doSizeChanged(); }
+
+    // ----------------------------------------------------------------
+    // Widget overrides — event routing
+    // ----------------------------------------------------------------
+
+    /// Routes a hot-key event first to the focused widget, then to all
+    /// other children (D original order).
+    bool processHotKey(char32_t ch) override {
+        if (_focused && _focused->processHotKey(ch)) return true;
+        for (auto& w : widgets) {
+            if (w == _focused) continue;
+            if (w->processHotKey(ch)) return true;
+        }
+
+        return false;
+    }
+
+    /// Forwards a normal key event to the currently focused child.
+    bool processKey(char32_t ch) override {
+        if (_focused && _focused->processKey(ch)) return true;
+        return false;
+    }
+
+    /// Routes a cold-key event first to the focused widget, then to all
+    /// other children.
+    bool processColdKey(char32_t ch) override {
+        if (_focused && _focused->processColdKey(ch)) return true;
+        for (auto& w : widgets) {
+            if (w == _focused) continue;
+            if (w->processColdKey(ch)) return true;
+        }
+
+        return false;
+    }
+
+    /// Routes a mouse event to the topmost child widget whose bounding box
+    /// contains the event coordinates (iterates in reverse add order).
+    ///
+    /// After each redrawChildren() call, child x/y values are absolute.
+    /// We use them directly for hit-testing and dispatch — no save/restore needed.
+    /// Returns the base offset (border padding) for child widgets.
+    /// Overridden by Frame/Dialog which add their border. The default
+    /// container has no padding beyond its border field.
+    virtual void getBase(int& row, int& col) {
+        row = border;
+        col = border;
+    }
+
+    /// Routes a mouse event to the topmost child widget under the cursor.
+    ///
+    /// The event coordinates are translated into this container's local
+    /// coordinate system (ev->x -= x), widgets are hit-tested against their
+    /// relative position plus the base offset, the event is further
+    /// translated, and then w->processMouse(ev) is called VIRTUALLY. This
+    /// is important: a child Container runs its own processMouse (which
+    /// dispatches further), while a specialised container like MenuBar
+    /// runs ITS processMouse (which activates menus) instead of blindly
+    /// recursing. Widget coordinates are never modified — only ev.
+    void processMouse(const ncinput* ev) override {
+        if (!ev) return;
+        // Top-level entry: copy so we don't mutate the caller's ncinput.
+        // Nested calls receive an already-mutable pointer and translate it
+        // in place.
+        ncinput local = *ev;
+        processMouseTranslated(&local);
+    }
+
+    /// Translates the (mutable) event into local coordinates and dispatches
+    /// to the topmost matching child via the virtual processMouse.
+    void processMouseTranslated(ncinput* ev) {
+        int bx, by;
+        getBase(by, bx);
+
+        // Translate event into this container's coordinate space.
+        ev->x -= x;
+        ev->y -= y;
+
+        for (auto it = widgets.rbegin(); it != widgets.rend(); ++it) {
+            auto& w = *it;
+            int wx = w->x + bx;
+            int wy = w->y + by;
+            if (ev->x < wx || ev->x > wx + w->width  - 1) continue;
+            if (ev->y < wy || ev->y > wy + w->height - 1) continue;
+
+            // Translate past the base offset before handing to the child.
+            ev->x -= bx;
+            ev->y -= by;
+
+            // Virtual dispatch: a plain Container recurses via its own
+            // processMouse → processMouseTranslated; MenuBar etc. run their
+            // own processMouse override.
+            w->processMouse(ev);
+
+            return;
+        }
+    }
+
+    void redraw() override { redrawChildren(nctui::application::std_plane); }
+
+    void positionCursor() override;
+
+    // ----------------------------------------------------------------
+    // Widget management
+    // ----------------------------------------------------------------
+
+    /// Adds a widget to this container.
+    ///
+    /// Sets the widget's container pointer and, if the widget can receive
+    /// focus and no child is focused yet, gives it the initial focus.
+    /// If any focusable child is added, the container itself becomes
+    /// focusable.
+    void add(std::shared_ptr<Widget> w) {
+        if (!w) return;
+        w->container = this;
+        if (w->canFocus()) canFocus(true);
+        widgets.push_back(w);
+        if (!_focused && w->canFocus()) set_focused(w);
+    }
+
+    /// Removes a widget from this container.
+    ///
+    /// If the removed widget currently holds the focus, the focus is
+    /// cleared. If no focusable children remain, the container itself
+    /// becomes non-focusable.
+    void remove(std::shared_ptr<Widget> w);
+
+    /// Removes all child widgets.
+    void removeAll() {
+        auto copy = widgets;
+        for (auto& w : copy) remove(w);
+    }
+
+    /// Returns the currently focused child widget, or nullptr.
+    std::shared_ptr<Widget> focused() const { return _focused; }
+
+    /// Focuses the specified widget in this container.
+    ///
+    /// Removes focus from the previously focused widget, sets hasFocus on
+    /// the new widget, and moves the cursor to the new widget's position.
+    /// If w is itself a Container, its first focusable child is focused.
+    /// Passing nullptr clears the focus.
+    void set_focused(std::shared_ptr<Widget> w) {
+        if (w && !w->canFocus()) return;
+        if (_focused == w) return;
+        if (_focused) _focused->setFocus(false);
+        _focused = w;
+
+        if (_focused) {
+            _focused->setFocus(true);
+            if (auto c = std::dynamic_pointer_cast<Container>(_focused))
+                c->focusFirst();
+            // Do NOT call positionCursor() here: widget coords may be
+            // absolute (during mouse dispatch) causing double-offset.
+            // positionCursor() is called correctly by redrawChildren()
+            // after the next refresh() pass with proper coordinates.
+        }
+    }
+
+    /// Focuses the first focusable child widget.
+    void focusFirst() {
+        for (auto& w : widgets)
+            if (w->canFocus()) { set_focused(w); return; }   // canFocus()
+    }
+
+    /// Focuses the last focusable child widget.
+    void focusLast() {
+        for (auto it = widgets.rbegin(); it != widgets.rend(); ++it)
+            if ((*it)->canFocus()) { set_focused(*it); return; }   // canFocus()
+    }
+
+    /// Focuses the next focusable child, wrapping if at the end.
+    ///
+    /// If the focused child is itself a Container, the focus is first
+    /// advanced within that child before moving to a sibling. Returns
+    /// true if a new widget was focused, false if there are no more
+    /// candidates (the focus is then cleared).
+    bool focusNext() {
+        if (!_focused) { focusFirst(); return _focused != nullptr; }
+        if (auto c = std::dynamic_pointer_cast<Container>(_focused))
+            if (c->focusNext()) return true;
+
+        auto it = std::find(widgets.begin(), widgets.end(), _focused);
+        if (it != widgets.end()) {
+            for (++it; it != widgets.end(); ++it)
+                if ((*it)->canFocus()) { set_focused(*it); return true; }   // canFocus()
+        }
+        set_focused(nullptr);
+
+        return false;
+    }
+
+    /// Focuses the previous focusable child, wrapping if at the beginning.
+    ///
+    /// Mirrors focusNext() in reverse.
+    bool focusPrev() {
+        if (!_focused) { focusLast(); return true; }
+        if (auto c = std::dynamic_pointer_cast<Container>(_focused))
+            if (c->focusPrev()) return true;
+
+        auto it = std::find(widgets.rbegin(), widgets.rend(), _focused);
+        if (it != widgets.rend()) {
+            for (++it; it != widgets.rend(); ++it)
+                if ((*it)->canFocus()) { set_focused(*it); return true; }   // canFocus()
+        }
+        set_focused(nullptr);
+
+        return false;
+    }
+
+    /// Redraws all children, setting their absolute terminal coordinates
+    /// before each draw call — mirroring the D original which updates
+    /// child positions in-place rather than save/restore.
+    ///
+    /// x/y of children are restored to relative after each redraw() call.
+    void redrawChildren(ncpp::Plane* plane) {
+        for (auto& w : widgets) {
+            if (w->x >= width  - border * 2) continue;
+            if (w->y >= height - border * 2) continue;
+
+            int saved_x = w->x, saved_y = w->y;
+            w->x = x + border + saved_x;
+            w->y = y + border + saved_y;
+            w->redraw();
+            // ALWAYS restore: x/y must remain relative between draw passes.
+            w->x = saved_x;
+            w->y = saved_y;
+        }
+
+        positionCursor();
+    }
+
+    /// Propagates a size-change notification to all children, adjusting
+    /// dimensions of widgets that have Fill::Horizontal or Fill::Vertical set.
+    void doSizeChanged() override {
+        if (onSizeChanged) onSizeChanged();
+        for (auto& w : widgets) {
+            w->doSizeChanged();
+            if ((w->fill & Fill::Horizontal) != Fill::None)
+                w->width  = width  - (border * 2) - w->x;
+            if ((w->fill & Fill::Vertical) != Fill::None)
+                w->height = height - (border * 2) - w->y;
+        }
+    }
+};
+
+// -----------------------------------------------------------------------
+// Container method definitions (outside class body for shared-library ABI)
+// -----------------------------------------------------------------------
+
+void Container::positionCursor() {
+    if (!_focused) return;
+    int saved_x = _focused->x, saved_y = _focused->y;
+    _focused->x = x + border + saved_x;
+    _focused->y = y + border + saved_y;
+    _focused->positionCursor();
+    _focused->x = saved_x;
+    _focused->y = saved_y;
+}
+
+void Container::remove(std::shared_ptr<Widget> w) {
+    if (!w) return;
+    if (_focused == w) set_focused(nullptr);
+    std::erase(widgets, w);
+    w->container = nullptr;
+    if (widgets.empty()) canFocus(false);
+}
+
+} // namespace nctui
+
+// Wire up the colour accessor callbacks in the widget_colors namespace
+// (defined in :globals) so that Widget::colorNormal() etc. can delegate
+// to Container::containerColor* without a circular import.
+// The void* parameter matches Container* — safe because Container is the
+// only type ever passed, and we cast back to const Container* here where
+// the full type is visible.
+namespace {
+    const bool _color_accessors_registered = []() {
+        nctui::widget_colors::getNormal    = [](const void* c) {
+            return static_cast<const nctui::Container*>(c)->containerColorNormal;
+        };
+
+        nctui::widget_colors::getFocus     = [](const void* c) {
+            return static_cast<const nctui::Container*>(c)->containerColorFocus;
+        };
+
+        nctui::widget_colors::getHotNormal = [](const void* c) {
+            return static_cast<const nctui::Container*>(c)->containerColorHotNormal;
+        };
+
+        nctui::widget_colors::getHotFocus  = [](const void* c) {
+            return static_cast<const nctui::Container*>(c)->containerColorHotFocus;
+        };
+
+        return true;
+    }();
+}

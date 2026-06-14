@@ -1,0 +1,184 @@
+//
+// Simple notcurses-based GUI toolkit, button widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <string>
+#include <functional>
+#include <cctype>
+#include <cstdint>
+
+export module nctui:button;
+import :widget;
+import :globals;
+import :container;
+import :keys;
+
+export namespace nctui {
+
+/// Button widget.
+///
+/// Provides a button that can be clicked, or pressed with the Enter key,
+/// and processes hot keys (the first uppercase letter in the button label
+/// becomes the hot key).
+class Button : public Widget {
+private:
+    std::string _text;
+    std::string shown_text;
+    char32_t    hot_key  = 0;
+    int         hot_pos  = -1;
+    bool        is_default = false;
+
+    /// Shared hot-key check: sets focus on this button and fires clicked().
+    ///
+    /// Returns true if key matches the hot key (case-insensitive), false otherwise.
+    bool checkKey(char32_t key) {
+        if (static_cast<char32_t>(std::toupper(static_cast<unsigned char>(key)))
+                == static_cast<char32_t>(std::toupper(static_cast<unsigned char>(hot_key))))
+        {
+            if (container) container->set_focused(shared_from_this());
+            if (clicked)   clicked();
+            return true;
+        }
+
+        return false;
+    }
+
+public:
+    /// Clicked event, raised when the button is clicked.
+    ///
+    /// Client code can hook up to this event. It is raised when the button
+    /// is activated either with the mouse or the keyboard.
+    std::function<void()> clicked;
+
+    /// Creates a button at position (0, 0) with the given label.
+    ///
+    /// The button width is computed from the label length. This button is
+    /// not a default button.
+    explicit Button(const std::string& s, bool is_def = false)
+        : Widget(0, 0, 0, 1), is_default(is_def)
+    {
+        canFocus(true);
+        text(s);
+    }
+
+    /// Creates a button at position (x, y) with the given label.
+    ///
+    /// The button width is computed from the label length. If is_def is
+    /// true, a special decoration is used and the Enter key on a dialog
+    /// will implicitly activate this button.
+    Button(int x, int y, const std::string& s, bool is_def = false)
+        : Widget(x, y, 0, 1), is_default(is_def)
+    {
+        canFocus(true);
+        text(s);
+    }
+
+    /// Returns the text displayed by this widget.
+    const std::string& text() const { return _text; }
+
+    /// Sets the text displayed by this widget.
+    ///
+    /// Recomputes the shown text (with brackets), widget width, and hot key.
+    void text(const std::string& value) {
+        _text      = value;
+        shown_text = is_default ? "[< " + _text + " >]"
+                                : "[ "  + _text + " ]";
+        width      = static_cast<int>(shown_text.length());
+
+        hot_pos = -1;
+        hot_key = 0;
+        for (int i = 0; i < static_cast<int>(shown_text.length()); ++i) {
+            if (std::isupper(static_cast<unsigned char>(shown_text[i]))) {
+                hot_key = shown_text[i];
+                hot_pos = i;
+                break;
+            }
+        }
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        auto setColor = [&](uint64_t channels) {
+            plane->set_channels(channels);
+        };
+
+        uint64_t base   = hasFocus() ? colorFocus()    : colorNormal();
+        uint64_t hotCol = hasFocus() ? colorHotFocus() : colorHotNormal();
+
+        // Write the full button label with background colour.
+        setColor(base);
+        plane->putstr(y, x, shown_text.c_str());
+
+        // Overlay the hot-key character in the accent colour.
+        if (hot_pos != -1) {
+            setColor(hotCol);
+            char buf[2] = { static_cast<char>(hot_key), 0 };
+            plane->putstr(y, x + hot_pos, buf);
+        }
+    }
+
+    /// Positions the cursor on the hot-key character of the button label.
+    ///
+    /// x and y are expected to be absolute terminal coordinates at the
+    /// time this is called (the container translates them before calling).
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (plane)
+            plane->cursor_move(y, x + (hot_pos >= 0 ? hot_pos : 0));
+    }
+
+    /// Handles global hot-key activation: Alt+hot_key activates this button
+    /// from anywhere in the dialog. The Alt bit is folded into the key id by
+    /// handleInput (Keys::Alt); isAlt() strips it and returns the base char.
+    bool processHotKey(char32_t key) override {
+        if (int base = nctui::isAlt(key))
+            return checkKey(static_cast<char32_t>(base));
+        return false;
+    }
+
+    /// Cold-key handler: activates the default button on Enter, or any
+    /// button when its hot key is pressed without Alt (e.g. from another
+    /// widget that does not consume the key).
+    bool processColdKey(char32_t key) override {
+        if (is_default && key == NCKEY_ENTER) {
+            if (clicked) clicked();
+            return true;
+        }
+        return checkKey(key);
+    }
+
+    /// Key handler when the button has focus: Enter, Space, or the hot key
+    /// all activate the button.
+    bool processKey(char32_t ch) override {
+        if (ch == NCKEY_ENTER || ch == ' ' ||
+            static_cast<char32_t>(std::toupper(static_cast<unsigned char>(ch)))
+                == static_cast<char32_t>(std::toupper(static_cast<unsigned char>(hot_key))))
+        {
+            if (clicked) clicked();
+            return true;
+        }
+        return false;
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev || !container) return;
+        // On press: set focus. set_focused() no longer calls redraw() —
+        // the container's processMouse caller will trigger a full refresh.
+        if (ev->evtype == NCTYPE_PRESS || ev->evtype == NCTYPE_UNKNOWN) {
+            container->set_focused(shared_from_this());
+        } else if (ev->evtype == NCTYPE_RELEASE) {
+            if (clicked) clicked();
+        }
+    }
+};
+
+} // namespace nctui

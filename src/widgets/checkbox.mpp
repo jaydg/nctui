@@ -1,0 +1,156 @@
+//
+// Simple notcurses-based GUI toolkit, checkbox widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <string>
+#include <functional>
+#include <cctype>
+#include <cstdint>
+
+export module nctui:checkbox;
+import :widget;
+import :container;
+import :globals;
+
+export namespace nctui {
+
+/// CheckBox widget.
+///
+/// Provides an on/off toggle that the user can set. The first uppercase
+/// letter in the label text becomes the hot key for the widget.
+class CheckBox : public Widget {
+private:
+    std::string _text;
+    int      hot_pos = -1;
+    char32_t hot_key = 0;
+    bool     _checked = false;
+
+public:
+    /// Toggled event, raised when the CheckBox is toggled.
+    ///
+    /// Client code can hook up to this event. It is raised when the
+    /// CheckBox is activated either with the mouse or the keyboard.
+    std::function<void()> toggled;
+
+    /// Creates a CheckBox at (x, y) with the given label text.
+    ///
+    /// The widget width is computed from the text length. The CheckBox
+    /// starts in the unchecked state.
+    CheckBox(int x, int y, const std::string& s)
+        : CheckBox(x, y, s, false) {}
+
+    /// Creates a CheckBox at (x, y) with the given label text and initial
+    /// checked state.
+    ///
+    /// The widget width is computed from the text length.
+    CheckBox(int x, int y, const std::string& s, bool is_checked)
+        : Widget(x, y, 0, 1), _checked(is_checked)
+    {
+        text(s);
+        canFocus(true);
+    }
+
+    /// Returns the current checked state of the CheckBox.
+    bool checked() const { return _checked; }
+
+    /// Sets the checked state of the CheckBox.
+    void checked(bool value) { _checked = value; }
+
+    /// Returns the label text displayed by this widget.
+    const std::string& text() const { return _text; }
+
+    /// Sets the label text displayed by this widget.
+    ///
+    /// The widget width is recalculated and the hot key is re-parsed:
+    /// the first uppercase letter in the new text becomes the hot key.
+    void text(const std::string& value) {
+        _text   = value;
+        width   = static_cast<int>(_text.length()) + 4;
+        hot_pos = -1;
+        hot_key = 0;
+
+        int i = 0;
+        for (unsigned char c : _text) {
+            if (std::isupper(c)) {
+                hot_key = c;
+                hot_pos = i;
+                break;
+            }
+            ++i;
+        }
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        auto setColor = [&](uint64_t channels) {
+            plane->set_channels(channels);
+        };
+
+        uint64_t base   = hasFocus() ? colorFocus()    : colorNormal();
+        uint64_t hotCol = hasFocus() ? colorHotFocus() : colorHotNormal();
+
+        // Pre-fill the entire checkbox row with the background colour.
+        setColor(base);
+        std::string blank(width, ' ');
+        plane->putstr(y, x, blank.c_str());
+
+        // Checkbox symbol in normal colour, then label in focus/normal colour.
+        setColor(colorNormal());
+        plane->putstr(y, x, _checked ? "[X] " : "[ ] ");
+
+        setColor(base);
+        plane->putstr(y, x + 3, _text.c_str());
+
+        // Hot-key character in accent colour.
+        if (hot_pos != -1) {
+            setColor(hotCol);
+            char buf[2] = { static_cast<char>(hot_key), 0 };
+            plane->putstr(y, x + 3 + hot_pos, buf);
+        }
+
+        positionCursor();
+    }
+
+    /// Positions the cursor at the checkbox bracket (x + 1), i.e. on the
+    /// space inside "[ ]", which is the natural cursor position for the widget.
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (plane) plane->cursor_move(y, x + 1);
+    }
+
+    bool processKey(char32_t ch) override {
+        if (ch == ' ') {
+            _checked = !_checked;
+            if (toggled) toggled();
+            redraw();
+            return true;
+        }
+        return false;
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev || !container) return;
+        // On press: move focus to this checkbox so the highlight updates.
+        // On release: toggle the checked state and fire the callback.
+        // This gives immediate visual feedback on press.
+        if (ev->evtype == NCTYPE_PRESS || ev->evtype == NCTYPE_UNKNOWN) {
+            container->set_focused(shared_from_this());
+            container->redraw();
+        } else if (ev->evtype == NCTYPE_RELEASE) {
+            _checked = !_checked;
+            if (toggled) toggled();
+            redraw();
+        }
+    }
+};
+
+} // namespace nctui

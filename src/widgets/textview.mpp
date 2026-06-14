@@ -1,0 +1,646 @@
+//
+// TextView: multi-line text editing widget
+//
+// Authors:
+//   Miguel de Icaza (miguel@gnome.org)
+//   Joachim de Groot
+//
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+// TODO:
+//   In ReadOnly mode backspace/space behave like pageup/pagedown
+//   Alt-D (delete word forward), Alt-Backspace (delete word backward)
+//   API to set the cursor position
+//   API to scroll to a particular place
+//   Keybindings to go to top/bottom
+//   Public API to insert/remove ranges
+//   Save buffer API
+//   Attributed text on spans
+//   Move all text manipulation into TextModel
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <algorithm>
+#include <cstddef>
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <vector>
+#include <memory>
+#include <cctype>
+
+export module nctui:textview;
+import :widget;
+import :globals;
+import :keys;
+import :container;
+
+export namespace nctui {
+
+// -----------------------------------------------------------------------
+// TextModel — internal storage for the text lines.
+// -----------------------------------------------------------------------
+class TextModel {
+private:
+    std::vector<std::string> _lines;
+
+public:
+    TextModel() { _lines.push_back(""); }
+
+    /// Loads the file at filepath into the model.
+    ///
+    /// Returns true if the file was loaded successfully, false otherwise.
+    bool loadFile(const std::string& filepath) {
+        if (filepath.empty()) return false;
+        std::ifstream file(filepath);
+        if (!file.is_open()) return false;
+        _lines.clear();
+        std::string line;
+        while (std::getline(file, line)) _lines.push_back(line);
+        if (_lines.empty()) _lines.push_back("");
+
+        return true;
+    }
+
+    /// Loads the model content from a string, splitting on newlines.
+    void loadString(const std::string& s) {
+        _lines.clear();
+        std::istringstream ss(s);
+        std::string line;
+        while (std::getline(ss, line)) _lines.push_back(line);
+        if (_lines.empty()) _lines.push_back("");
+    }
+
+    /// Returns the full text content joined by newlines.
+    std::string toString() const {
+        std::string result;
+        for (std::size_t i = 0; i < _lines.size(); ++i) {
+            result += _lines[i];
+            if (i + 1 < _lines.size()) result += '\n';
+        }
+
+        return result;
+    }
+
+    /// The number of text lines in the model.
+    std::size_t lineCount() const { return _lines.size(); }
+
+    /// Returns the specified line.
+    ///
+    /// If the index is out of range the last line is returned.
+    std::string getLine(std::size_t index) const {
+        return index < _lines.size() ? _lines[index] : _lines.back();
+    }
+
+    /// Replaces the line at index with text.
+    void setLine(std::size_t index, const std::string& text) {
+        if (index < _lines.size()) _lines[index] = text;
+    }
+
+    /// Inserts a new line at the given position.
+    ///
+    /// Params:
+    ///     index = Line number where the line will be inserted.
+    ///     text  = The text content of the new line.
+    void insertLine(std::size_t index, const std::string& text) {
+        if (index <= _lines.size())
+            _lines.insert(_lines.begin() + static_cast<std::ptrdiff_t>(index), text);
+    }
+
+    /// Inserts multiple lines at the given position.
+    void insertLines(std::size_t index, const std::vector<std::string>& lines) {
+        if (index <= _lines.size())
+            _lines.insert(_lines.begin() + static_cast<std::ptrdiff_t>(index),
+                          lines.begin(), lines.end());
+    }
+
+    /// Removes the line at the given position.
+    ///
+    /// If the model contains only one line, it is cleared instead.
+    void removeLine(std::size_t index) {
+        if (index < _lines.size() && _lines.size() > 1)
+            _lines.erase(_lines.begin() + static_cast<std::ptrdiff_t>(index));
+        else if (_lines.size() == 1)
+            _lines[0] = "";
+    }
+};
+
+// -----------------------------------------------------------------------
+// TextView widget
+// -----------------------------------------------------------------------
+
+/// Multi-line text editing view.
+///
+/// The text view provides a multi-line text editor. Users interact with it
+/// with the standard Emacs commands for movement or the arrow keys.
+///
+/// Keyboard shortcuts:
+///   Left / Control-b       — Move the editing point left.
+///   Right / Control-f      — Move the editing point right.
+///   Alt-b                  — Move one word back.
+///   Alt-f                  — Move one word forward.
+///   Up / Control-p         — Move the editing point one line up.
+///   Down / Control-n       — Move the editing point one line down.
+///   Home / Control-a       — Move the cursor to the beginning of the line.
+///   End / Control-e        — Move the cursor to the end of the line.
+///   Delete / Control-d     — Delete the character in front of the cursor.
+///   Backspace              — Delete the character behind the cursor.
+///   Control-k              — Delete text until end of line; save to kill ring.
+///   Control-y              — Paste content of the kill ring at current position.
+///   Control-Space          — Start text selection.
+///   Alt-w                  — Copy the selected region to the kill ring.
+///   Control-w              — Cut the selected region to the kill ring.
+///   Control-q              — Quote the next input character (suppress special handling).
+///   Enter                  — Insert a newline.
+class TextView : public Widget {
+private:
+    uint64_t normalChannels = 0;
+    uint64_t focusChannels  = 0;
+
+    bool selecting             = false;
+    int selectionStartColumn   = 0;
+    int selectionStartRow      = 0;
+    std::string clipboard;
+    bool lastWasKill           = false;
+    bool quoteNext             = false;   // Control-q: quote next character
+
+    // ncplane_dim_yx expects unsigned* — wrap to avoid repeated casts.
+    void planeDim(unsigned& h, unsigned& w) const {
+        ncplane_dim_yx(plane, &h, &w);
+    }
+
+    // Returns the text of the region between (selectionStartRow,
+    // selectionStartColumn) and (currentRow, currentColumn).
+    std::string getRegion() const {
+        int r1 = selectionStartRow, c1 = selectionStartColumn;
+        int r2 = currentRow,        c2 = currentColumn;
+        if (r1 > r2 || (r1 == r2 && c1 > c2)) {
+            std::swap(r1, r2);
+            std::swap(c1, c2);
+        }
+
+        std::string result;
+        for (int r = r1; r <= r2; ++r) {
+            std::string line = model->getLine(r);
+            int start = (r == r1) ? c1 : 0;
+            int end   = (r == r2) ? c2 : static_cast<int>(line.length());
+            result += line.substr(start, end - start);
+            if (r < r2) result += '\n';
+        }
+
+        return result;
+    }
+
+    // Erases the selected region from the model.
+    void clearRegion() {
+        int r1 = selectionStartRow, c1 = selectionStartColumn;
+        int r2 = currentRow,        c2 = currentColumn;
+        if (r1 > r2 || (r1 == r2 && c1 > c2)) {
+            std::swap(r1, r2);
+            std::swap(c1, c2);
+        }
+        if (r1 == r2) {
+            std::string line = model->getLine(r1);
+            model->setLine(r1, line.substr(0, c1) + line.substr(c2));
+        } else {
+            std::string first = model->getLine(r1).substr(0, c1);
+            std::string last  = model->getLine(r2).substr(c2);
+            model->setLine(r1, first + last);
+            for (int r = r2; r > r1; --r)
+                model->removeLine(r);
+        }
+        currentRow    = r1;
+        currentColumn = c1;
+    }
+
+    // Inserts text at the current cursor position, handling newlines.
+    void insertText(const std::string& s) {
+        for (char c : s) {
+            if (c == '\n') {
+                std::string curLine = model->getLine(currentRow);
+                model->setLine(currentRow, curLine.substr(0, currentColumn));
+                model->insertLine(currentRow + 1, curLine.substr(currentColumn));
+                currentRow++;
+                currentColumn = 0;
+            } else {
+                std::string curLine = model->getLine(currentRow);
+                model->setLine(currentRow,
+                    curLine.substr(0, currentColumn) + c + curLine.substr(currentColumn));
+                currentColumn++;
+            }
+        }
+        adjustViewport();
+        redraw();
+    }
+
+    bool isWordBoundary(char c) const {
+        return std::isspace(static_cast<unsigned char>(c))
+            || std::ispunct(static_cast<unsigned char>(c));
+    }
+
+    void moveWordBackward() {
+        if (currentColumn == 0) {
+            if (currentRow > 0) {
+                currentRow--;
+                currentColumn = static_cast<int>(model->getLine(currentRow).length());
+            }
+
+            return;
+        }
+        std::string line = model->getLine(currentRow);
+        int col = currentColumn - 1;
+        while (col > 0 && std::isspace(static_cast<unsigned char>(line[col]))) col--;
+        while (col > 0 && !isWordBoundary(line[col - 1])) col--;
+        currentColumn = col;
+    }
+
+    void moveWordForward() {
+        std::string line = model->getLine(currentRow);
+        int len = static_cast<int>(line.length());
+        if (currentColumn >= len) {
+            if (currentRow + 1 < static_cast<int>(model->lineCount())) {
+                currentRow++;
+                currentColumn = 0;
+            }
+
+            return;
+        }
+        int col = currentColumn;
+        while (col < len && !isWordBoundary(line[col])) col++;
+        while (col < len && std::isspace(static_cast<unsigned char>(line[col]))) col++;
+        currentColumn = col;
+    }
+
+public:
+    std::unique_ptr<TextModel> model;
+
+    /// The dedicated sub-plane for this widget. TextView creates its own
+    /// ncplane so it can erase and scroll independently of other widgets.
+    ncplane* plane = nullptr;
+
+    int currentRow    = 0;
+    int currentColumn = 0;
+    int topRow        = 0;
+    int leftColumn    = 0;
+
+    /// When true the widget rejects all editing input.
+    bool isReadOnly = false;
+
+    /// Creates a TextView at (x, y) with the given width and height.
+    ///
+    /// parent_plane is the notcurses plane used as parent for the sub-plane
+    /// (typically the standard plane from nctui::application::std_plane's
+    /// underlying ncplane*).
+    TextView(ncplane* parent_plane, int x, int y, int w, int h)
+        : Widget(x, y, w, h)
+    {
+        canFocus(true);
+        model = std::make_unique<TextModel>();
+
+        ncplane_options opts{};
+        opts.y    = static_cast<unsigned>(y);
+        opts.x    = static_cast<unsigned>(x);
+        opts.rows = static_cast<unsigned>(h);
+        opts.cols = static_cast<unsigned>(w);
+        plane = ncplane_create(parent_plane, &opts);
+
+        ncchannels_set_fchannel(&normalChannels, 0xCCCCCC);
+        ncchannels_set_bchannel(&normalChannels, 0x111111);
+        ncchannels_set_fchannel(&focusChannels,  0xFFFFFF);
+        ncchannels_set_bchannel(&focusChannels,  0x222222);
+    }
+
+    ~TextView() {
+        if (plane) ncplane_destroy(plane);
+    }
+
+    /// Gets the text content of the widget.
+    std::string text() const { return model->toString(); }
+
+    /// Sets the text content, resetting the cursor to position (0, 0).
+    void text(const std::string& value) {
+        currentRow = currentColumn = topRow = leftColumn = 0;
+        model->loadString(value);
+        redraw();
+    }
+
+    /// Gets the read-only attribute.
+    bool readOnly() const { return isReadOnly; }
+    /// Sets the read-only attribute.
+    void readOnly(bool value) { isReadOnly = value; }
+
+    /// Loads the contents of the file at path into the TextView.
+    ///
+    /// Resets the cursor to (0, 0). Returns true if the file was loaded.
+    bool loadFile(const std::string& path) {
+        if (path.empty()) return false;
+        currentRow = currentColumn = topRow = leftColumn = 0;
+        bool ok = model->loadFile(path);
+        redraw();
+
+        return ok;
+    }
+
+    /// Shows or hides the terminal hardware cursor when focus changes.
+    ///
+    /// Mirrors the D original's curs_set(1)/curs_set(0) calls. Uses the
+    /// cursor_show/cursor_hide callbacks registered by application::init().
+    void setFocus(bool value) override {
+        Widget::setFocus(value);   // sets _hasFocus and calls redraw()
+        if (!value) {
+            if (nctui::application::cursor_hide) nctui::application::cursor_hide();
+        }
+        // On focus gain, positionCursor() is called by the container after
+        // set_focused() — it will invoke cursor_show with the correct coords.
+    }
+
+    void redraw() override {
+        if (!plane) return;
+        ncplane_erase(plane);
+        ncplane_set_channels(plane, hasFocus() ? focusChannels : normalChannels);
+
+        unsigned uh, uw;
+        planeDim(uh, uw);
+        int h = static_cast<int>(uh), w = static_cast<int>(uw);
+
+        for (int r = 0; r < h; ++r) {
+            int lineIdx = topRow + r;
+            if (lineIdx < static_cast<int>(model->lineCount())) {
+                std::string line = model->getLine(lineIdx);
+                std::string render;
+                if (leftColumn < static_cast<int>(line.length()))
+                    render = line.substr(leftColumn);
+                if (static_cast<int>(render.length()) > w)
+                    render.resize(w);
+                ncplane_putstr_yx(plane, r, 0, render.c_str());
+            }
+        }
+
+        positionCursor();
+    }
+
+    /// Positions the cursor on the current row and column and enables
+    /// the hardware cursor there via cursor_show.
+    void positionCursor() override {
+        if (!plane) return;
+        unsigned uh, uw;
+        planeDim(uh, uw);
+        int h = static_cast<int>(uh), w = static_cast<int>(uw);
+        int sy = currentRow    - topRow;
+        int sx = currentColumn - leftColumn;
+        if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
+            ncplane_cursor_move_yx(plane, sy, sx);
+            // Enable the hardware cursor at the absolute terminal position.
+            // The plane is positioned at (y, x) on the terminal, so the
+            // absolute cursor position is (y + sy, x + sx).
+            if (nctui::application::cursor_show)
+                nctui::application::cursor_show(y + sy, x + sx);
+        }
+    }
+
+    void adjustViewport() {
+        unsigned uh, uw;
+        planeDim(uh, uw);
+        int h = static_cast<int>(uh), w = static_cast<int>(uw);
+        if (currentRow    < topRow)               topRow     = currentRow;
+        else if (currentRow    >= topRow + h)     topRow     = currentRow - h + 1;
+        if (currentColumn < leftColumn)           leftColumn = currentColumn;
+        else if (currentColumn >= leftColumn + w) leftColumn = currentColumn - w + 1;
+    }
+
+    bool processKey(char32_t key) override {
+        // Control-Q: quote next character (pass it through as literal input)
+        if (quoteNext) {
+            quoteNext = false;
+            if (!isReadOnly && key >= 32) {
+                std::string curLine = model->getLine(currentRow);
+                model->setLine(currentRow,
+                    curLine.substr(0, currentColumn) + static_cast<char>(key)
+                    + curLine.substr(currentColumn));
+                currentColumn++;
+                adjustViewport(); redraw();
+            }
+            return true;
+        }
+
+        lastWasKill = false;
+        std::string curLine = model->getLine(currentRow);
+        unsigned uh, uw;
+        planeDim(uh, uw);
+        int h = static_cast<int>(uh);
+
+        switch (key) {
+            // ---- Navigation ----
+            case NCKEY_UP:
+            case static_cast<char32_t>(Keys::CtrlP):
+                if (currentRow > 0) {
+                    currentRow--;
+                    currentColumn = std::min(currentColumn,
+                        static_cast<int>(model->getLine(currentRow).length()));
+                    adjustViewport(); redraw(); return true;
+                }
+                break;
+
+            case NCKEY_DOWN:
+            case static_cast<char32_t>(Keys::CtrlN):
+                if (currentRow + 1 < static_cast<int>(model->lineCount())) {
+                    currentRow++;
+                    currentColumn = std::min(currentColumn,
+                        static_cast<int>(model->getLine(currentRow).length()));
+                    adjustViewport(); redraw(); return true;
+                }
+                break;
+
+            case NCKEY_LEFT:
+            case static_cast<char32_t>(Keys::CtrlB):
+                if (currentColumn > 0) currentColumn--;
+                else if (currentRow > 0) {
+                    currentRow--;
+                    currentColumn = static_cast<int>(model->getLine(currentRow).length());
+                }
+                adjustViewport(); redraw(); return true;
+
+            case NCKEY_RIGHT:
+            case static_cast<char32_t>(Keys::CtrlF):
+                if (currentColumn < static_cast<int>(curLine.length())) currentColumn++;
+                else if (currentRow + 1 < static_cast<int>(model->lineCount())) {
+                    currentRow++; currentColumn = 0;
+                }
+                adjustViewport(); redraw(); return true;
+
+            case NCKEY_HOME:
+            case static_cast<char32_t>(Keys::CtrlA):
+                currentColumn = 0;
+                adjustViewport(); redraw(); return true;
+
+            case NCKEY_END:
+            case static_cast<char32_t>(Keys::CtrlE):
+                currentColumn = static_cast<int>(curLine.length());
+                adjustViewport(); redraw(); return true;
+
+            case NCKEY_PGUP:
+                currentRow = std::max(0, currentRow - h);
+                currentColumn = std::min(currentColumn,
+                    static_cast<int>(model->getLine(currentRow).length()));
+                adjustViewport(); redraw(); return true;
+
+            case NCKEY_PGDOWN:
+                currentRow = std::min(static_cast<int>(model->lineCount()) - 1,
+                                      currentRow + h);
+                currentColumn = std::min(currentColumn,
+                    static_cast<int>(model->getLine(currentRow).length()));
+                adjustViewport(); redraw(); return true;
+
+            // Word navigation (Alt-B / Alt-F)
+            case static_cast<char32_t>('b') | static_cast<uint32_t>(Keys::Alt):
+                moveWordBackward();
+                adjustViewport(); redraw(); return true;
+
+            case static_cast<char32_t>('f') | static_cast<uint32_t>(Keys::Alt):
+                moveWordForward();
+                adjustViewport(); redraw(); return true;
+
+            // ---- Editing ----
+            case NCKEY_BACKSPACE:
+                if (isReadOnly) return false;
+                if (currentColumn > 0) {
+                    model->setLine(currentRow,
+                        curLine.substr(0, currentColumn - 1) + curLine.substr(currentColumn));
+                    currentColumn--;
+                    adjustViewport(); redraw(); return true;
+                } else if (currentRow > 0) {
+                    std::string upper = model->getLine(currentRow - 1);
+                    currentColumn = static_cast<int>(upper.length());
+                    model->setLine(currentRow - 1, upper + curLine);
+                    model->removeLine(currentRow);
+                    currentRow--;
+                    adjustViewport(); redraw(); return true;
+                }
+                break;
+
+            case NCKEY_DEL:
+            case static_cast<char32_t>(Keys::CtrlD):
+                if (isReadOnly) return false;
+                if (currentColumn < static_cast<int>(curLine.length())) {
+                    model->setLine(currentRow,
+                        curLine.substr(0, currentColumn) + curLine.substr(currentColumn + 1));
+                    redraw(); return true;
+                } else if (currentRow + 1 < static_cast<int>(model->lineCount())) {
+                    model->setLine(currentRow, curLine + model->getLine(currentRow + 1));
+                    model->removeLine(currentRow + 1);
+                    redraw(); return true;
+                }
+                break;
+
+            case static_cast<char32_t>(Keys::CtrlK): {
+                // Deletes text until the end of the line and replaces the kill
+                // buffer with the deleted text. You can paste this text in a
+                // different place by using Control-y.
+                // Successive Ctrl-K presses accumulate into the kill buffer.
+                if (isReadOnly) break;
+                if (curLine.empty()) {
+                    model->removeLine(currentRow);
+                    if (lastWasKill) clipboard += '\n';
+                    else             clipboard  = "\n";
+                } else {
+                    std::string rest = curLine.substr(currentColumn);
+                    if (lastWasKill) clipboard += rest;
+                    else             clipboard  = rest;
+                    model->setLine(currentRow, curLine.substr(0, currentColumn));
+                }
+                redraw();
+                lastWasKill = true;
+                return true;
+            }
+
+            case static_cast<char32_t>(Keys::CtrlY):
+                // Pastes the content of the kill ring into the current position.
+                if (isReadOnly) break;
+                insertText(clipboard);
+                selecting = false;
+                return true;
+
+            case static_cast<char32_t>(Keys::CtrlSpace):
+                // Starts text selection.
+                selecting            = true;
+                selectionStartColumn = currentColumn;
+                selectionStartRow    = currentRow;
+                return true;
+
+            case static_cast<char32_t>('w') | static_cast<uint32_t>(Keys::Alt):
+                // Copies the selected region to the kill ring.
+                clipboard = getRegion();
+                selecting = false;
+                return true;
+
+            case static_cast<char32_t>(Keys::CtrlW):
+                // Cuts the selected region to the kill ring.
+                clipboard = getRegion();
+                if (!isReadOnly) clearRegion();
+                selecting = false;
+                redraw(); return true;
+
+            case static_cast<char32_t>(Keys::CtrlQ):
+                // Quotes the next input character, preventing its normal
+                // processing and inserting it literally.
+                quoteNext = true;
+                return true;
+
+            case NCKEY_ENTER:
+                if (isReadOnly) return false;
+                {
+                    model->setLine(currentRow, curLine.substr(0, currentColumn));
+                    model->insertLine(currentRow + 1, curLine.substr(currentColumn));
+                    currentRow++;
+                    currentColumn = 0;
+                    adjustViewport(); redraw(); return true;
+                }
+
+            default:
+                // Ignore control characters and other non-printable keys.
+                if (key < 32 || key > 0x10FFFF) return false;
+                if (isReadOnly) return true;
+                model->setLine(currentRow,
+                    curLine.substr(0, currentColumn) + static_cast<char>(key)
+                    + curLine.substr(currentColumn));
+                currentColumn++;
+                adjustViewport(); redraw(); return true;
+        }
+
+        return true;
+    }
+
+    /// Handles a mouse event on the TextView.
+    ///
+    /// Translates the absolute terminal coordinates in ni to plane-relative
+    /// coordinates and moves the cursor to the clicked position.
+    void processMouse(const ncinput* ev) override {
+        if (!ev || !plane) return;
+        if (ev->evtype == NCTYPE_RELEASE) return;
+
+        if (!hasFocus() && container)
+            container->set_focused(shared_from_this());
+
+        int rel_y = ev->y, rel_x = ev->x;
+        ncplane_translate_abs(plane, &rel_y, &rel_x);
+
+        unsigned uh, uw;
+        planeDim(uh, uw);
+        int h = static_cast<int>(uh);
+        if (rel_y < 0 || rel_y >= h) return;
+
+        int maxRow = static_cast<int>(model->lineCount()) - 1;
+        currentRow = std::min(topRow + rel_y, maxRow);
+
+        std::string line = model->getLine(currentRow);
+        currentColumn = std::clamp(leftColumn + rel_x, 0, static_cast<int>(line.length()));
+
+        adjustViewport();
+        redraw();
+    }
+};
+
+} // namespace nctui

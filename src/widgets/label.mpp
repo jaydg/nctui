@@ -1,0 +1,88 @@
+//
+// Simple notcurses-based GUI toolkit, label widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <string>
+#include <format>
+#include <cstdint>
+
+export module nctui:label;
+
+import :widget;
+import :globals;
+
+export namespace nctui {
+
+/// Label widget, displays a string at a given position.
+class Label : public Widget {
+protected:
+    std::string _text;
+
+public:
+    /// Optional fixed colour. -1 means: use colorNormal() from the container.
+    int color = -1;
+
+    /// Creates a label at (x, y) with the given string.
+    Label(int x, int y, const std::string& s)
+        : Widget(x, y, static_cast<int>(s.length()), 1)
+    {
+        _text = s;
+    }
+
+    /// Creates a label at (x, y) using a std::format format string.
+    template<typename... Args>
+    Label(int x, int y, std::format_string<Args...> fmt, Args&&... args)
+        : Widget(x, y, 0, 1)
+    {
+        _text = std::format(fmt, std::forward<Args>(args)...);
+        width = static_cast<int>(_text.length());
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        plane->set_channels((color != -1) ? static_cast<uint64_t>(color) : colorNormal());
+
+        // Pad to full widget width so the background colour fills the
+        // entire label area (not just the text characters).
+        std::string padded = _text;
+
+        if (static_cast<int>(padded.length()) < width)
+            padded.append(width - padded.length(), ' ');
+
+        plane->putstr(y, x, padded.c_str());
+    }
+
+    /// Returns the text displayed by this widget.
+    std::string text() const { return _text; }
+
+    /// Sets the text displayed by this widget.
+    ///
+    /// The old text area is cleared with spaces first (matching the D
+    /// original which overwrites with addch(' ') for each old character),
+    /// then the new text is rendered and the widget width is updated.
+    void text(const std::string& value) {
+        ncpp::Plane* plane = nctui::application::std_plane;
+
+        if (plane) {
+            plane->set_channels(colorNormal());
+            // Overwrite the old text with spaces before writing the new one.
+            std::string blank(_text.length(), ' ');
+            plane->putstr(y, x, blank.c_str());
+        }
+
+        _text = value;
+        width = static_cast<int>(_text.length());
+        redraw();
+    }
+};
+
+} // namespace nctui

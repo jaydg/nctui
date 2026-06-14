@@ -1,0 +1,466 @@
+//
+// Simple notcurses-based GUI toolkit, menu bar widget
+//
+// Copyright (C) 2007-2011 Novell Inc
+// Copyright (C) 2017 Microsoft Corp
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+
+export module nctui:menubar;
+
+import :widget;
+import :container;
+import :globals;
+import :keys;
+
+export namespace nctui {
+
+/// A menu item has a title, an associated help text, and an action to
+/// execute on activation.
+struct MenuItem {
+    std::string           help;
+    std::function<void()> action;
+    char32_t              hotKey   = 0;
+    char32_t              shortCut = 0;
+
+    MenuItem(std::string t, std::string h, std::function<void()> a)
+        : help(std::move(h)), action(std::move(a))
+    {
+        title(std::move(t));
+    }
+
+    const std::string& title() const { return _title; }
+
+    void title(std::string value) {
+        _title = std::move(value);
+        _width = static_cast<int>(_title.length()) + static_cast<int>(help.length()) + 1;
+
+        hotKey = 0;
+        bool nextIsHot = false;
+        for (unsigned char c : _title) {
+            if (c == '_') { nextIsHot = true; continue; }
+            if (nextIsHot) { hotKey = std::toupper(c); break; }
+            nextIsHot = false;
+        }
+    }
+
+    int width() const { return _width; }
+
+private:
+    std::string _title;
+    int         _width = 0;
+};
+
+/// A menu bar item contains other menu items.
+struct MenuBarItem {
+    std::vector<std::shared_ptr<MenuItem>> children;
+    char32_t hotKey = 0;
+
+    MenuBarItem(std::string t, std::vector<std::shared_ptr<MenuItem>> c)
+        : children(std::move(c))
+    {
+        title(std::move(t));
+    }
+
+    const std::string& title() const { return _title; }
+
+    void title(std::string value) {
+        _title = std::move(value);
+        // Display width: title length excluding underscore markers.
+        _width = 0;
+        for (char c : _title) if (c != '_') _width++;
+
+        hotKey = 0;
+        bool nextIsHot = false;
+
+        for (unsigned char c : _title) {
+            if (c == '_') { nextIsHot = true; continue; }
+            if (nextIsHot) { hotKey = std::toupper(c); break; }
+            nextIsHot = false;
+        }
+    }
+
+    int width() const { return _width; }
+
+private:
+    std::string _title;
+    int         _width = 0;
+};
+
+class MenuBar;
+
+/// Drop-down menu shown when a MenuBar entry is activated.
+class Menu : public Container {
+private:
+    std::shared_ptr<MenuBarItem> barItems;
+    MenuBar*                     host;
+    int                          current = 0;
+
+    static void setColor(ncpp::Plane* plane, uint64_t channels) {
+        plane->set_channels(channels);
+    }
+
+    /// Draws s with the '_'-prefixed character in hotColor, rest in normalColor.
+    static void drawHotString(ncpp::Plane* plane, int row, int col,
+                              const std::string& s,
+                              uint64_t hotColor, uint64_t normalColor)
+    {
+        bool nextIsHot = false;
+        int  c = col;
+        for (unsigned char ch : s) {
+            if (ch == '_') { nextIsHot = true; continue; }
+            setColor(plane, nextIsHot ? hotColor : normalColor);
+            char buf[2] = { static_cast<char>(ch), 0 };
+            plane->putstr(row, c++, buf);
+            nextIsHot = false;
+        }
+    }
+
+    void run(std::function<void()> action);
+
+public:
+    Menu(MenuBar* h, int x, int y, std::shared_ptr<MenuBarItem> items);
+
+    /// Maximum display width of any child item.
+    int maxChildWidth() const {
+        int maxW = 0;
+        for (auto& item : barItems->children)
+            if (item) maxW = std::max(maxW, item->width());
+
+        return maxW;
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        int itemCount = static_cast<int>(barItems->children.size());
+
+        // Frame around the drop-down in the menu colour.
+        setColor(plane, nctui::application::colorMenu);
+        Widget::drawFrame(plane, x, y, width, height, true);
+
+        for (int i = 0; i < itemCount; ++i) {
+            auto& item = barItems->children[i];
+
+            uint64_t rowColor = (i == current)
+                ? nctui::application::colorMenuSelected
+                : nctui::application::colorMenu;
+
+            // Fill the row (between the frame borders) with the row colour.
+            setColor(plane, rowColor);
+            if (!item) {
+                // null entry → separator line
+                for (int p = 1; p < width - 1; ++p)
+                    plane->putstr(y + i + 1, x + p, "─");
+                continue;
+            }
+            std::string blank(width - 2, ' ');
+            plane->putstr(y + i + 1, x + 1, blank.c_str());
+
+            // Title with hot-key highlight.
+            uint64_t hotColor = (i == current)
+                ? nctui::application::colorMenuHotSelected
+                : nctui::application::colorMenuHot;
+            drawHotString(plane, y + i + 1, x + 1, item->title(), hotColor, rowColor);
+
+            // Right-aligned help text.
+            if (!item->help.empty()) {
+                int l = static_cast<int>(item->help.length());
+                setColor(plane, rowColor);
+                plane->putstr(y + i + 1, x + width - l - 1, item->help.c_str());
+            }
+        }
+
+        positionCursor();
+    }
+
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (plane) plane->cursor_move(y + current + 1, x + 1);
+    }
+
+    bool processKey(char32_t key) override {
+        int itemCount = static_cast<int>(barItems->children.size());
+        switch (key) {
+            case NCKEY_UP:
+                if (--current < 0) current = itemCount - 1;
+                redraw();
+                return true;
+            case NCKEY_DOWN:
+                if (++current >= itemCount) current = 0;
+                redraw();
+                return true;
+            case NCKEY_LEFT:
+                previousMenu();
+                return true;
+            case NCKEY_RIGHT:
+                nextMenu();
+                return true;
+            case static_cast<char32_t>(Keys::Esc):
+                closeMenu();
+                return true;
+            case NCKEY_ENTER:
+                if (current >= 0 && current < itemCount &&
+                    barItems->children[current])
+                    run(barItems->children[current]->action);
+                return true;
+            default:
+                if (std::isalnum(static_cast<unsigned char>(key))) {
+                    char32_t up = std::toupper(static_cast<unsigned char>(key));
+                    for (auto& item : barItems->children)
+                        if (item && item->hotKey == up) {
+                            run(item->action);
+                            return true;
+                        }
+                }
+                return true;
+        }
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev) return;
+        // The parent container translates the event into ITS inner coordinate
+        // space, but does not subtract this menu's own position. So ev->y is
+        // relative to the parent's inner area, where this menu sits at y.
+        // Subtract the menu's y to get a menu-local row, then subtract 1 for
+        // the top frame line, giving the item index.
+        int item = ev->y - y - 1;
+        if (item < 0 || item >= static_cast<int>(barItems->children.size()))
+            return;
+
+        if (ev->evtype == NCTYPE_RELEASE) {
+            if (barItems->children[item])
+                run(barItems->children[item]->action);
+        } else {
+            current = item;
+            redraw();
+        }
+    }
+
+    void closeMenu();
+    void previousMenu();
+    void nextMenu();
+};
+
+/// A menu bar for your application.
+class MenuBar : public Container {
+private:
+    int                     selected = -1;
+    std::shared_ptr<Menu>   _openMenu;
+    std::shared_ptr<Widget> previousFocused;
+
+    static void setColor(ncpp::Plane* plane, uint64_t channels) {
+        plane->set_channels(channels);
+    }
+
+    static void drawHotString(ncpp::Plane* plane, int row, int col,
+                              const std::string& s,
+                              uint64_t hotColor, uint64_t normalColor)
+    {
+        bool nextIsHot = false;
+        int  c = col;
+        for (unsigned char ch : s) {
+            if (ch == '_') { nextIsHot = true; continue; }
+            setColor(plane, nextIsHot ? hotColor : normalColor);
+            char buf[2] = { static_cast<char>(ch), 0 };
+            plane->putstr(row, c++, buf);
+            nextIsHot = false;
+        }
+    }
+
+public:
+    std::vector<std::shared_ptr<MenuBarItem>> menus;
+
+    explicit MenuBar(const std::vector<std::shared_ptr<MenuBarItem>>& m)
+        : Container(0, 0, nctui::application::cols(), 1), menus(m)
+    {
+        canFocus(false);
+        selected = -1;
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        // Fill the whole bar row with the focus colour.
+        setColor(plane, nctui::application::colorFocus);
+        std::string blank(width, ' ');
+        plane->putstr(y, x, blank.c_str());
+
+        int pos = 1;
+        for (std::size_t i = 0; i < menus.size(); ++i) {
+            uint64_t hotColor, normalColor;
+            if (static_cast<int>(i) == selected) {
+                hotColor    = nctui::application::colorMenuHotSelected;
+                normalColor = nctui::application::colorMenuSelected;
+            } else {
+                hotColor    = nctui::application::colorMenuHot;
+                normalColor = nctui::application::colorMenu;
+            }
+            drawHotString(plane, y, x + pos, menus[i]->title(), hotColor, normalColor);
+            pos += menus[i]->width() + 3;
+        }
+
+        positionCursor();
+    }
+
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+        int pos = 0;
+
+        for (std::size_t i = 0; i < menus.size(); ++i) {
+            if (static_cast<int>(i) == selected) {
+                plane->cursor_move(y, x + pos + 1);
+                return;
+            }
+            pos += menus[i]->width() + 4;
+        }
+
+        plane->cursor_move(y, x);
+    }
+
+    /// Opens the drop-down for menu entry index.
+    void openMenu(int index) {
+        if (_openMenu && container) {
+            container->remove(_openMenu);
+            container->redraw();
+        }
+
+        int col = 0;
+        for (int j = 0; j < index; ++j)
+            col += menus[j]->width() + 3;
+
+        // Menu is a child of the same container as the MenuBar; its x/y are
+        // relative to that container's inner area. The bar is at y=0, so the
+        // drop-down opens at y=1.
+        _openMenu = std::make_shared<Menu>(this, col, 1, menus[index]);
+        if (container) {
+            container->add(_openMenu);
+            container->set_focused(_openMenu);
+        }
+    }
+
+    void startMenu() {
+        if (_openMenu) return;
+        selected = 0;
+        if (container) previousFocused = container->focused();
+        openMenu(selected);
+    }
+
+    void activate(int idx) {
+        selected = idx;
+        if (!_openMenu && container)
+            previousFocused = container->focused();
+        openMenu(idx);
+    }
+
+    void closeMenu() {
+        selected = -1;
+        if (_openMenu && container)
+            container->remove(_openMenu);
+        if (previousFocused && previousFocused->container)
+            previousFocused->container->set_focused(previousFocused);
+        _openMenu.reset();
+        if (container) container->redraw();
+    }
+
+    void previousMenu() {
+        if (selected <= 0) selected = static_cast<int>(menus.size()) - 1;
+        else               selected--;
+        openMenu(selected);
+    }
+
+    void nextMenu() {
+        if (selected == -1) selected = 0;
+        else if (selected + 1 == static_cast<int>(menus.size())) selected = 0;
+        else selected++;
+        openMenu(selected);
+    }
+
+    bool processHotKey(char32_t key) override {
+        // F9 opens the first menu (matches the D original KEY_F(9) handler).
+        if (key == NCKEY_F09) {
+            startMenu();
+            return true;
+        }
+
+        // Alt+letter activates the menu whose hot key matches. The Alt bit is
+        // folded into the key id by handleInput (Keys::Alt); isAlt() strips it
+        // and returns the base character, or 0 if Alt was not held.
+        if (int base = nctui::isAlt(key)) {
+            char32_t hk = std::toupper(static_cast<unsigned char>(base));
+            for (std::size_t i = 0; i < menus.size(); ++i)
+                if (menus[i]->hotKey == hk) {
+                    activate(static_cast<int>(i));
+                    return true;
+                }
+        }
+
+        return false;
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev) return;
+
+        // Accept PRESS, RELEASE, and UNKNOWN (some terminals report a click
+        // as NCTYPE_UNKNOWN). Mirrors the D original which checks
+        // BUTTON1_CLICKED || BUTTON1_RELEASED.
+        if (ev->evtype == NCTYPE_PRESS ||
+            ev->evtype == NCTYPE_RELEASE ||
+            ev->evtype == NCTYPE_UNKNOWN)
+        {
+            int pos = 1;
+            for (std::size_t i = 0; i < menus.size(); ++i) {
+                if (ev->x >= pos && ev->x < pos + menus[i]->width()) {
+                    activate(static_cast<int>(i));
+                    return;
+                }
+                pos += 2 + menus[i]->width() + 1;
+            }
+        }
+    }
+};
+
+// -----------------------------------------------------------------------
+// Menu method bodies depending on the complete MenuBar definition
+// -----------------------------------------------------------------------
+
+inline Menu::Menu(MenuBar* h, int x, int y, std::shared_ptr<MenuBarItem> items)
+    : Container(x, y,
+                [&]() {
+                    int maxW = 0;
+                    for (auto& c : items->children)
+                        if (c) maxW = std::max(maxW, c->width());
+                    return maxW + 4;
+                }(),
+                static_cast<int>(items->children.size()) + 2),
+      barItems(std::move(items)), host(h)
+{
+    canFocus(true);
+}
+
+inline void Menu::run(std::function<void()> action) {
+    closeMenu();
+    if (action) action();
+}
+
+inline void Menu::closeMenu()    { if (host) host->closeMenu();    }
+inline void Menu::previousMenu() { if (host) host->previousMenu(); }
+inline void Menu::nextMenu()     { if (host) host->nextMenu();     }
+
+} // namespace nctui

@@ -1,0 +1,99 @@
+//
+// Simple notcurses-based GUI toolkit, frame widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <string>
+#include <cstdint>
+
+export module nctui:frame;
+
+import :container;
+import :globals;
+
+export namespace nctui {
+
+/// Framed-container widget.
+///
+/// A container that draws a Unicode box-drawing frame around its children
+/// and displays an optional title embedded in the top border line.
+///
+/// The border width is always 1, so child coordinates are relative to the
+/// inner area (the first usable row and column inside the frame).
+class Frame : public Container {
+public:
+    /// The title displayed in the top border line.
+    std::string title;
+
+    /// Creates a Frame with the given title at position (0, 0) with zero
+    /// initial size.
+    ///
+    /// Position and dimensions are typically set later by a layout callback
+    /// (e.g. Container::onSizeChanged) before the Frame is shown.
+    explicit Frame(const std::string& t)
+        : Frame(0, 0, 0, 0, t) {}
+
+    /// Creates a Frame at (x, y) with width w, height h, and the given title.
+    Frame(int x, int y, int w, int h, const std::string& t)
+        : Container(x, y, w, h), title(t)
+    {
+        border = 1;
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        // Clear the entire frame area with the container's normal colour.
+        plane->set_channels(containerColorNormal);
+
+        for (int row = y; row < y + height; ++row) {
+            std::string blank(width, ' ');
+            plane->putstr(row, x, blank.c_str());
+        }
+
+        // Draw the Unicode box-drawing frame (mirrors Widget::drawFrame).
+        if (width >= 2 && height >= 2) {
+            plane->putstr(y,              x,              "┌");
+            plane->putstr(y,              x + width - 1,  "┐");
+            plane->putstr(y + height - 1, x,              "└");
+            plane->putstr(y + height - 1, x + width - 1,  "┘");
+
+            for (int col = x + 1; col < x + width - 1; ++col) {
+                plane->putstr(y,              col, "─");
+                plane->putstr(y + height - 1, col, "─");
+            }
+
+            for (int row = y + 1; row < y + height - 1; ++row) {
+                plane->putstr(row, x,             "│");
+                plane->putstr(row, x + width - 1, "│");
+            }
+        }
+
+        // Embed the title in the top border line.
+        // Switch to the dialog-normal colour when the frame has focus.
+        if (!title.empty() && width > 4) {
+            if (hasFocus()) {   // hasFocus() is a method call, not a field access
+                plane->set_channels(nctui::application::colorDialogNormal);
+            }
+
+            std::string label = " " + title + " ";
+            int max_title = width - 2;
+
+            if (static_cast<int>(label.length()) > max_title)
+                label.resize(max_title);
+
+            plane->putstr(y, x + 1, label.c_str());
+        }
+
+        redrawChildren(plane);
+    }
+};
+
+} // namespace nctui

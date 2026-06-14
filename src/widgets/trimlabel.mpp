@@ -1,0 +1,87 @@
+//
+// Simple notcurses-based GUI toolkit, trimmed label widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <string>
+#include <cstddef>
+
+export module nctui:trimlabel;
+import :widget;
+import :label;
+import :container;
+
+export namespace nctui {
+
+/// A label that can be trimmed to a given width.
+///
+/// Just like a label, but it can be trimmed to a given width if the text
+/// being displayed overflows the specified width. When trimming, an
+/// ellipsis ("...") is inserted in the middle to show both the beginning
+/// and the end of the text.
+class TrimLabel : public Label {
+private:
+    std::string original;
+
+    /// Recomputes _text from original, trimming or padding to w columns.
+    ///
+    /// If Fill::Horizontal is set and a container is present, w is
+    /// overridden with the container's available inner width.
+    void setString(int w, const std::string& s) {
+        if ((fill & Fill::Horizontal) != Fill::None && container)
+            w = container->width - container->border * 2 - x;
+
+        width = w;
+        int len = static_cast<int>(s.length());
+
+        if (len > w) {
+            if (w < 5)
+                // Too narrow for an ellipsis: just truncate.
+                Label::text(s.substr(0, w));
+            else
+                // Show beginning … end (D original formula).
+                Label::text(s.substr(0, w / 2 - 2)
+                            + "..."
+                            + s.substr(s.length() - w / 2 + 1));
+        } else {
+            Label::text(s);
+        }
+    }
+
+public:
+    /// Creates a TrimLabel at (x, y) with maximum display width w and
+    /// initial text s.
+    TrimLabel(int x, int y, int w, const std::string& s)
+        : Label(x, y, s), original(s)
+    {
+        setString(w, s);
+    }
+
+    void doSizeChanged() override {
+        if ((fill & Fill::Horizontal) != Fill::None)
+            setString(0, original);
+    }
+
+    /// Returns the original (untrimmed) text.
+    ///
+    /// Unlike Label::text(), this returns the full string that was set,
+    /// not the possibly-truncated display text.
+    std::string text() const { return original; }
+
+    /// Sets the text, trimming it to the current widget width.
+    ///
+    /// The original text is stored so that it can be re-trimmed correctly
+    /// if the widget is later resized.
+    void text(const std::string& value) {
+        original = value;
+        setString(width, value);
+        redraw();
+    }
+};
+
+} // namespace nctui

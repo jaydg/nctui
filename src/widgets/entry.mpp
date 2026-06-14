@@ -1,0 +1,340 @@
+//
+// Simple notcurses-based GUI toolkit, text entry widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <string>
+#include <functional>
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+
+export module nctui:entry;
+
+import :widget;
+import :globals;
+import :container;
+import :keys;
+
+export namespace nctui {
+
+/// Text data entry widget.
+///
+/// The Entry widget provides Emacs-like single-line editing functionality
+/// and mouse support. The cursor scrolls horizontally when the text is
+/// longer than the widget width.
+///
+/// Keyboard shortcuts:
+///   Backspace / 127       — Delete the character behind the cursor.
+///   Delete / Control-d    — Delete the character in front of the cursor.
+///   Home / Control-a      — Move cursor to the beginning of the text.
+///   End / Control-e       — Move cursor to the end of the text.
+///   Left / Control-b      — Move cursor one character backward.
+///   Right / Control-f     — Move cursor one character forward.
+///   Control-k             — Kill (delete) text from cursor to end; saves
+///                           the deleted text in the kill buffer.
+///   Control-y             — Yank (paste) the kill buffer at the cursor.
+///   Alt-b                 — Move cursor one word backward.
+///   Alt-f                 — Move cursor one word forward.
+class Entry : public Widget {
+private:
+    std::string _text;
+    std::string kill_buf;      ///< Kill ring buffer (Ctrl-K / Ctrl-Y).
+    std::size_t first = 0;     ///< Index of the first visible character (scroll offset).
+    std::size_t point = 0;     ///< Current cursor position within _text.
+    bool        used  = false; ///< True once the user has typed at least one character.
+    bool        _secret = false;
+
+    /// Adjusts the scroll offset so the cursor remains visible, then redraws.
+    void adjust() {
+        if (point < first) {
+            first = point;
+        } else if (point >= first + static_cast<std::size_t>(width)) {
+            first = point - width / 3;
+        }
+        redraw();
+    }
+
+    /// Sets _text to new_text if it differs from the current value, clamps
+    /// point, updates first, and fires the changed callback.
+    void setText(const std::string& new_text) {
+        if (new_text != _text) {
+            _text = new_text;
+            if (point > _text.length()) point = _text.length();
+            first = point > static_cast<std::size_t>(width) ? point - width : 0;
+            if (changed) changed();
+        }
+    }
+
+    /// Returns the codepoint index after moving one word forward from p,
+    /// or -1 if already at the end.
+    int wordForward(std::size_t p) const {
+        if (p >= _text.length()) return -1;
+        int i   = static_cast<int>(p);
+        int len = static_cast<int>(_text.length());
+        if (std::ispunct(static_cast<unsigned char>(_text[i]))
+            || std::isspace(static_cast<unsigned char>(_text[i])))
+        {
+            while (i < len && !std::isalnum(static_cast<unsigned char>(_text[i]))) i++;
+            while (i < len &&  std::isalnum(static_cast<unsigned char>(_text[i]))) i++;
+        } else {
+            while (i < len && std::isalnum(static_cast<unsigned char>(_text[i]))) i++;
+        }
+
+        return (static_cast<std::size_t>(i) != p) ? i : -1;
+    }
+
+    /// Returns the codepoint index after moving one word backward from p,
+    /// or -1 if already at the beginning.
+    int wordBackward(std::size_t p) const {
+        if (p == 0) return -1;
+        int i = static_cast<int>(p) - 1;
+        if (i == 0) return 0;
+        if (std::ispunct(static_cast<unsigned char>(_text[i]))
+            || std::isspace(static_cast<unsigned char>(_text[i])))
+        {
+            while (i >= 0 && !std::isalnum(static_cast<unsigned char>(_text[i]))) i--;
+            while (i >= 0 &&  std::isalnum(static_cast<unsigned char>(_text[i]))) i--;
+        } else {
+            while (i >= 0 && std::isalnum(static_cast<unsigned char>(_text[i]))) i--;
+        }
+        i++;
+
+        return (static_cast<std::size_t>(i) != p) ? i : -1;
+    }
+
+public:
+    /// Changed event, raised when the text in the entry changes.
+    ///
+    /// Client code can hook up to this event to be notified whenever the
+    /// user modifies the text.
+    std::function<void()> changed;
+
+    /// Creates an Entry at (x, y) with display width w and initial text s.
+    ///
+    /// The cursor is placed at the end of the initial text.
+    Entry(int x, int y, int w, const std::string& s)
+        : Widget(x, y, w, 1), _text(s)
+    {
+        canFocus(true);
+        point = s.length();
+        first = point > static_cast<std::size_t>(w) ? point - w : 0;
+    }
+
+    /// Hides the hardware cursor on destruction if this entry had focus,
+    /// preventing a dangling visible cursor after the dialog is closed.
+    ~Entry() {
+        if (hasFocus() && nctui::application::cursor_hide)
+            nctui::application::cursor_hide();
+    }
+
+    /// Returns the current text in the entry.
+    std::string text() const { return _text; }
+
+    /// Sets the text in the entry.
+    ///
+    /// The cursor is clamped to the new text length and the scroll offset
+    /// is recomputed. Does not fire the changed callback.
+    void text(const std::string& value) {
+        _text = value;
+        if (point > _text.length()) point = _text.length();
+
+        first = point > static_cast<std::size_t>(width) ? point - width : 0;
+        redraw();
+    }
+
+    /// Returns true if the entry is in secret (password) mode.
+    bool secret() const { return _secret; }
+
+    /// Sets the secret (password) mode.
+    ///
+    /// In secret mode the text is displayed as a row of asterisks so the
+    /// actual content is not visible on screen.
+    void secret(bool v) { _secret = v; redraw(); }
+
+    /// Returns the current cursor position within the text.
+    int cursorPosition() const { return static_cast<int>(point); }
+
+    /// Shows or hides the terminal hardware cursor when focus changes.
+    ///
+    /// Mirrors the D original's curs_set(1)/curs_set(0) calls. Uses the
+    /// cursor_show/cursor_hide callbacks registered by application::init()
+    /// so that Entry does not need to import :application directly.
+    void setFocus(bool value) override {
+        Widget::setFocus(value);   // sets _hasFocus and calls redraw()
+        if (!value) {
+            if (nctui::application::cursor_hide) nctui::application::cursor_hide();
+        }
+        // On focus gain, positionCursor() is called by the container after
+        // set_focused() — it will invoke cursor_show with the correct coords.
+    }
+
+    /// Positions the terminal cursor at the current editing point and
+    /// enables the hardware cursor at that position.
+    ///
+    /// Called by redraw() and after every keystroke so the blinking cursor
+    /// follows the editing point correctly.
+    void positionCursor() override {
+        int col = x + static_cast<int>(point - first);
+        if (nctui::application::cursor_show) nctui::application::cursor_show(y, col);
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        // Entry uses the focused container colour to distinguish it from labels.
+        plane->set_channels(colorFocus());
+
+        std::string vis;
+        if (_secret) {
+            std::size_t vlen = std::min(_text.length() - first,
+                                        static_cast<std::size_t>(width));
+            vis = std::string(vlen, '*');
+        } else {
+            std::size_t avail = _text.length() > first ? _text.length() - first : 0;
+            std::size_t vlen  = std::min(avail, static_cast<std::size_t>(width));
+            vis = _text.substr(first, vlen);
+        }
+        // Always pad to full width so the background colour fills the entry field.
+        if (static_cast<int>(vis.length()) < width)
+            vis.append(width - vis.length(), ' ');
+
+        plane->putstr(y, x, vis.c_str());
+        positionCursor();
+    }
+
+    bool processKey(char32_t key) override {
+        std::size_t tlen = _text.length();
+
+        // Keys::* are enum class values and cannot appear as case labels
+        // alongside char32_t constants without an explicit cast.
+        switch (key) {
+            case 127:
+            case NCKEY_BACKSPACE:
+                if (point == 0) return true;
+                setText(_text.substr(0, point - 1) + _text.substr(point));
+                point--;
+                adjust();
+                break;
+
+            case NCKEY_HOME:
+            case static_cast<char32_t>(Keys::CtrlA):
+                point = 0;
+                adjust();
+                break;
+
+            case NCKEY_LEFT:
+            case static_cast<char32_t>(Keys::CtrlB):
+                if (point > 0) { point--; adjust(); }
+                break;
+
+            case NCKEY_DEL:
+            case static_cast<char32_t>(Keys::CtrlD):
+                if (point == tlen) break;
+                setText(_text.substr(0, point) + _text.substr(point + 1));
+                adjust();
+                break;
+
+            case NCKEY_END:
+            case static_cast<char32_t>(Keys::CtrlE):
+                point = tlen;
+                adjust();
+                break;
+
+            case NCKEY_RIGHT:
+            case static_cast<char32_t>(Keys::CtrlF):
+                if (point < tlen) { point++; adjust(); }
+                break;
+
+            case static_cast<char32_t>(Keys::CtrlK):
+                // Kill text from cursor to end of line; save it in the kill
+                // buffer so it can be restored with Ctrl-Y (yank).
+                kill_buf = _text.substr(point);
+                setText(_text.substr(0, point));
+                adjust();
+                break;
+
+            case static_cast<char32_t>(Keys::CtrlY):
+                // Yank (paste) the kill buffer at the current cursor position.
+                if (kill_buf.empty()) return true;
+                if (point == tlen) {
+                    setText(_text + kill_buf);
+                    point = _text.length();
+                } else {
+                    setText(_text.substr(0, point) + kill_buf + _text.substr(point));
+                    point += kill_buf.length();
+                }
+                adjust();
+                break;
+
+            default:
+                // Alt-b: move one word backward. handleInput folds the
+                // Alt modifier into the key via Keys::Alt (0x2000).
+                if (key == (static_cast<char32_t>('b') | static_cast<uint32_t>(Keys::Alt))) {
+                    int bw = wordBackward(point);
+                    if (bw != -1) point = static_cast<std::size_t>(bw);
+                    adjust();
+                    break;
+                }
+
+                // Alt-f: move one word forward.
+                if (key == (static_cast<char32_t>('f') | static_cast<uint32_t>(Keys::Alt))) {
+                    int fw = wordForward(point);
+                    if (fw != -1) point = static_cast<std::size_t>(fw);
+                    adjust();
+                    break;
+                }
+
+                // Ignore other control characters.
+                if (key < 32 || key > 0x10FFFF) return false;
+
+                {
+                    char c = static_cast<char>(key);
+                    if (used) {
+                        setText(_text.substr(0, point) + c + _text.substr(point));
+                        point++;
+                    } else {
+                        // First keystroke: replace the initial text entirely,
+                        // matching the D original's behaviour (used flag).
+                        setText(std::string(1, c));
+                        first = 0;
+                        point = 1;
+                    }
+
+                    used = true;
+                    adjust();
+
+                    return true;
+                }
+        }
+
+        used = true;
+        return true;
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev || !container) return;
+        // The D original returns immediately on BUTTON1_CLICKED/RELEASED —
+        // only drag events (neither click nor release) reposition the cursor.
+        if (ev->evtype == NCTYPE_RELEASE) return;
+
+        container->set_focused(shared_from_this());
+
+        point = first + static_cast<std::size_t>(ev->x - x);
+        if (point > _text.length()) point = _text.length();
+        if (static_cast<int>(point) < static_cast<int>(first)) point = 0;
+
+        container->redraw();
+        container->positionCursor();
+    }
+};
+
+} // namespace nctui

@@ -1,0 +1,274 @@
+//
+// Simple notcurses-based GUI toolkit, list view widget
+//
+// Copyright (C) 2007-2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+export module nctui:listview;
+
+import :widget;
+import :globals;
+import :keys;
+
+export namespace nctui {
+
+// Forward declaration so IListProvider::setListView can reference ListView.
+class ListView;
+
+// -----------------------------------------------------------------------
+// IListProvider
+// -----------------------------------------------------------------------
+
+/// Model interface for the ListView widget.
+///
+/// Consumers of the ListView widget should implement this interface. The
+/// model is responsible for storing the data and for rendering individual
+/// items into the plane supplied by the view.
+class IListProvider {
+public:
+    /// When true, the ListView allows items to be individually marked
+    /// (highlighted) in addition to being selected.
+    bool allowMark = false;
+
+    virtual ~IListProvider() = default;
+
+    /// Returns the number of items in the model.
+    virtual std::size_t length() = 0;
+
+    /// Returns true if the item at index is currently marked.
+    virtual bool isMarked(std::size_t index) = 0;
+
+    /// Renders the item at index into plane at the given row, col, and
+    /// display width.
+    ///
+    /// The colour has already been set by the ListView before this call;
+    /// the provider should write the text without changing the colour
+    /// unless it needs per-character highlighting.
+    virtual void render(ncpp::Plane* plane, int y, int x, int w,
+                        std::size_t index) = 0;
+
+    /// Called by the ListView after construction so the model can hold a
+    /// reference back to its view.
+    ///
+    /// The default implementation is a no-op; override if the model needs
+    /// to call providerChanged() on its view.
+    virtual void setListView(ListView* target) {}
+
+    /// Allows the model to process a keystroke that the ListView did not
+    /// consume in its own processKey handler.
+    ///
+    /// The model should return true if the key was processed, false
+    /// otherwise. This is used, for example, to toggle the mark on the
+    /// current item when the user presses Space.
+    virtual bool processKey(char32_t ch) { return false; }
+
+    /// Called by the ListView whenever the selected item changes.
+    ///
+    /// Override to react to selection changes, e.g. to update a detail
+    /// panel that shows information about the selected item.
+    virtual void selectedChanged() {}
+};
+
+// -----------------------------------------------------------------------
+// ListView
+// -----------------------------------------------------------------------
+
+/// A list view widget.
+///
+/// Renders a scrollable list of items. The actual data and per-item
+/// rendering are delegated to an IListProvider supplied at construction
+/// time. The provider can be updated by calling providerChanged() when
+/// the underlying data set changes.
+class ListView : public Widget {
+private:
+    int _selected = 0;
+    int top       = 0;
+
+    static void setColor(ncpp::Plane* plane, uint64_t channels) {
+        if (!plane) return;
+        plane->set_channels(channels);
+    }
+
+    static void clearLine(ncpp::Plane* plane, int row, int col, int w) {
+        if (!plane) return;
+        std::string blank(w, ' ');
+        plane->putstr(row, col, blank.c_str());
+    }
+
+    void notifySelectedChanged() {
+        if (provider) provider->selectedChanged();
+    }
+
+public:
+    std::shared_ptr<IListProvider> provider;
+
+    /// Constructs a ListView at (x, y) with width w and height h.
+    ///
+    /// provider must not be null. setListView() is called on the provider
+    /// immediately so the model can store a back-reference to this view.
+    ListView(int x, int y, int w, int h, std::shared_ptr<IListProvider> prov)
+        : Widget(x, y, w, h), provider(prov)
+    {
+        canFocus(true);
+        if (provider) provider->setListView(this);
+    }
+
+    /// Notifies the view that the contents of the model have changed.
+    ///
+    /// Invoke this method to invalidate the contents of the ListView and
+    /// force a repaint. The top and selected indices are clamped to the
+    /// new length if the model has shrunk.
+    void providerChanged() {
+        if (!provider) return;
+        int len = static_cast<int>(provider->length());
+        if (top      > len) top      = len > 1 ? len - 1 : 0;
+        if (_selected > len) _selected = len > 1 ? len - 1 : 0;
+        redraw();
+    }
+
+    /// Returns the index of the currently selected item, or -1 if the
+    /// model is empty.
+    int selected() const {
+        if (!provider || provider->length() == 0) return -1;
+        return _selected;
+    }
+
+    /// Sets the index of the currently selected item.
+    ///
+    /// Fires selectedChanged() on the provider and redraws the widget.
+    /// Throws std::out_of_range if value is out of bounds.
+    void selected(int value) {
+        if (!provider || value >= static_cast<int>(provider->length()))
+            throw std::out_of_range("Invalid ListView index");
+        _selected = value;
+        notifySelectedChanged();
+        redraw();
+    }
+
+    /// Positions the cursor on the selected row so the terminal cursor
+    /// is visible at the correct location after a redraw.
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (plane) plane->cursor_move(y + (_selected - top), x);
+    }
+
+    void redraw() override {
+        if (!provider) return;
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        int len = static_cast<int>(provider->length());
+
+        for (int l = 0; l < height; ++l) {
+            int item = top + l;
+
+            uint64_t channels;
+            if (item >= len) {
+                channels = colorNormal();
+            } else {
+                bool marked = provider->allowMark && provider->isMarked(item);
+
+                if (item == _selected)
+                    channels = marked ? colorHotNormal() : colorFocus();
+                else
+                    channels = marked ? colorHotFocus() : colorNormal();
+            }
+
+            // Always fill the full row width with the background colour first.
+            // putstr only writes cells for actual characters — pre-filling
+            // ensures the background is correct even if the provider writes
+            // fewer characters than width.
+            setColor(plane, channels);
+            clearLine(plane, y + l, x, width);
+
+            if (item < len)
+                provider->render(plane, y + l, x, width, item);
+        }
+
+        positionCursor();
+    }
+
+    bool processKey(char32_t key) override {
+        if (!provider || provider->length() == 0) return false;
+        int len = static_cast<int>(provider->length());
+        int n;
+
+        // Keys::* values are enum class members and cannot appear directly
+        // as case labels alongside char32_t constants.  Cast them explicitly.
+        switch (key) {
+            case NCKEY_UP:
+            case static_cast<char32_t>(Keys::CtrlP):
+                if (_selected > 0) {
+                    _selected--;
+                    if (_selected < top) top = _selected;
+                    notifySelectedChanged();
+                    redraw();
+                    return true;
+                }
+                return false;
+
+            case NCKEY_DOWN:
+            case static_cast<char32_t>(Keys::CtrlN):
+                if (_selected + 1 < len) {
+                    _selected++;
+                    if (_selected >= top + height) top++;
+                    notifySelectedChanged();
+                    redraw();
+                    return true;
+                }
+                return false;
+
+            case NCKEY_PGDOWN:
+            case static_cast<char32_t>(Keys::CtrlV):
+                n = _selected + height;
+                if (n >= len) n = len - 1;
+                if (n != _selected) {
+                    _selected = n;
+                    top = (len >= height) ? _selected : 0;
+                    redraw();
+                }
+                return true;
+
+            case NCKEY_PGUP:
+                n = _selected - height;
+                if (n < 0) n = 0;
+                if (n != _selected) {
+                    _selected = n;
+                    top = _selected;
+                    redraw();
+                }
+                return true;
+
+            default:
+                // The model may handle keys the view does not recognise,
+                // e.g. Space to toggle the mark on the current item.
+                return provider->processKey(key);
+        }
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev || !provider) return;
+
+        if (ev->evtype == NCTYPE_RELEASE) return;
+
+        int rel_y = ev->y - y;
+        if (rel_y < 0) return;
+        if (rel_y + top >= static_cast<int>(provider->length())) return;
+
+        // selected() setter fires selectedChanged() and redraws.
+        selected(rel_y + top);
+    }
+};
+
+} // namespace nctui

@@ -1,0 +1,294 @@
+//
+// Simple managed main loop implementation.
+//
+// Copyright (C) 2011 Novell (http://www.novell.com)
+// Copyright (C) 2018,2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <poll.h>
+#include <unistd.h>
+#include <chrono>
+#include <functional>
+#include <vector>
+#include <map>
+#include <mutex>
+#include <memory>
+
+export module nctui:mainloop;
+
+// Forward declaration to break the circular dependency between
+// :mainloop (RunState holds a Container) and :container.
+export namespace nctui {
+    class Container;
+}
+
+export namespace nctui {
+
+/// Callback type used by addWatch and addTimeout.
+///
+/// The callback returns true to keep the watch or timer active,
+/// or false to remove it after this invocation.
+using Callback = std::function<bool()>;
+
+/// Handler type used by addIdle.
+using Handler = std::function<bool()>;
+
+using MonoClock = std::chrono::steady_clock;
+using TimePoint = MonoClock::time_point;
+
+/// Holds the state of a running container or dialog.
+///
+/// Returned by application::begin; pass it to application::runLoop
+/// and application::end.
+class RunState {
+public:
+    std::shared_ptr<Container> container;
+
+    /// Called by application::init() to wire up the dispose implementation.
+    ///
+    /// RunState cannot import :application (that would be circular), so the
+    /// actual end() call is registered here as a function pointer by the
+    /// application layer at startup. This gives us a single strong symbol for
+    /// dispose() in the shared library without any circular dependency.
+    static inline std::function<void(std::shared_ptr<Container>)> end_fn;
+
+    explicit RunState(std::shared_ptr<Container> c) : container(c) {}
+    ~RunState() { dispose(); }
+
+    /// Removes the container from the screen and cleans up.
+    void dispose();
+};
+
+// Out-of-class definition so Clang emits a single strong symbol in the
+// shared library (inline bodies in class definitions are not emitted as
+// strong symbols for shared libraries in C++20 modules).
+void RunState::dispose() {
+    if (container && end_fn) {
+        end_fn(container);
+        container = nullptr;
+    }
+}
+
+/// Simple main loop that can monitor file descriptors, run timers,
+/// and execute idle handlers.
+class MainLoop {
+public:
+    /// Conditions on file descriptors that can be monitored.
+    enum class Condition : short {
+        PollIn   = POLLIN,   ///< There is data to read.
+        PollOut  = POLLOUT,  ///< Writing will not block.
+        PollPri  = POLLPRI,  ///< There is urgent data to read.
+        PollErr  = POLLERR,  ///< Error condition on output.
+        PollHup  = POLLHUP,  ///< Hang-up on output.
+        PollNval = POLLNVAL  ///< File descriptor is not open.
+    };
+
+    struct Watch {
+        Condition condition;
+        Callback  callback;
+        int       fd;
+    };
+
+    struct Timeout {
+        std::chrono::milliseconds span;
+        Callback                  callback;
+    };
+
+private:
+    std::map<int,     Watch>   descriptorWatchers;
+    std::map<int64_t, Timeout> timeouts;
+    std::vector<Handler>       idleHandlers;
+    std::vector<pollfd>        pollmap;
+
+    bool        poll_dirty    = true;
+    int         wakeupPipes[2]{};
+    char        ignore        = 0;
+    bool        running       = false;
+    std::mutex  idle_mutex;
+
+    void wakeup() {
+        [[maybe_unused]] auto n = write(wakeupPipes[1], &ignore, 1);
+    }
+
+    void updatePollMap() {
+        if (!poll_dirty) return;
+        poll_dirty = false;
+        pollmap.clear();
+        for (const auto& [fd, watch] : descriptorWatchers) {
+            pollfd pfd{};
+            pfd.fd     = fd;
+            pfd.events = static_cast<short>(watch.condition);
+            pollmap.push_back(pfd);
+        }
+    }
+
+public:
+    /// Constructs a MainLoop, creating an internal wakeup pipe used by stop().
+    MainLoop() {
+        if (pipe(wakeupPipes) == 0) {
+            addWatch(wakeupPipes[0], Condition::PollIn, [this]() {
+                [[maybe_unused]] auto n = read(wakeupPipes[0], &ignore, 1);
+                return true;
+            });
+        }
+    }
+
+    ~MainLoop() {
+        close(wakeupPipes[0]);
+        close(wakeupPipes[1]);
+    }
+
+    /// Schedules idleHandler to be called on the next idle iteration.
+    ///
+    /// The returned value is a token that can be passed to removeIdle.
+    /// If the handler returns true it will be rescheduled; returning false
+    /// removes it.
+    Handler addIdle(Handler idleHandler) {
+        std::lock_guard<std::mutex> lock(idle_mutex);
+        idleHandlers.push_back(idleHandler);
+
+        return idleHandler;
+    }
+
+    /// Removes a previously registered idle handler.
+    ///
+    /// The idleHandler parameter must be the token returned by addIdle.
+    void removeIdle(Handler idleHandler) {
+        std::lock_guard<std::mutex> lock(idle_mutex);
+        std::erase_if(idleHandlers,
+            [&](const Handler& h) { return h.target<bool()>() == idleHandler.target<bool()>(); });
+    }
+
+    /// Watches a file descriptor for activity.
+    ///
+    /// When the condition is met, the provided callback is invoked. If the
+    /// callback returns false, the watch is automatically removed.
+    ///
+    /// The file descriptor itself serves as the watch token; pass it to
+    /// removeWatch to cancel monitoring.
+    void addWatch(int fd, Condition cond, Callback cb) {
+        descriptorWatchers[fd] = Watch{cond, cb, fd};
+        poll_dirty = true;
+    }
+
+    /// Removes an active watch from the main loop.
+    ///
+    /// The fd parameter is the file descriptor passed to addWatch.
+    void removeWatch(int fd) {
+        descriptorWatchers.erase(fd);
+        poll_dirty = true;
+    }
+
+    /// Adds a repeating timeout to the main loop.
+    ///
+    /// When the specified duration passes, the callback is invoked. If the
+    /// callback returns true, the timeout is reset and will fire again after
+    /// the same interval. If it returns false, the timeout is cancelled.
+    ///
+    /// Returns a token (millisecond timestamp) that can be passed to
+    /// removeTimeout.
+    int64_t addTimeout(std::chrono::milliseconds time, Callback cb) {
+        auto    target = MonoClock::now() + time;
+        int64_t key    = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             target.time_since_epoch()).count();
+        timeouts[key] = Timeout{time, cb};
+
+        return key;
+    }
+
+    /// Removes a previously scheduled timeout.
+    ///
+    /// The token parameter is the value returned by addTimeout.
+    void removeTimeout(int64_t token) {
+        timeouts.erase(token);
+    }
+
+    /// Returns true if there are pending events to be processed.
+    ///
+    /// Typically used to probe for events while running your own code in the
+    /// main thread. When wait is true, blocks until at least one event is
+    /// available or the next timeout fires.
+    bool eventsPending(bool wait = false) {
+        int pollTimeout = -1;
+        if (!timeouts.empty()) {
+            auto now  = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            MonoClock::now().time_since_epoch()).count();
+            auto next = timeouts.begin()->first;
+            pollTimeout = static_cast<int>(next - now);
+            if (pollTimeout < 0) return true;
+        }
+        if (!wait) pollTimeout = 0;
+
+        updatePollMap();
+        int n = poll(pollmap.data(), static_cast<nfds_t>(pollmap.size()), pollTimeout);
+
+        return n > 0
+            || (!timeouts.empty() && pollTimeout < 0)
+            || !idleHandlers.empty();
+    }
+
+    /// Processes one iteration of timers, file watches, and idle handlers.
+    ///
+    /// Example:
+    ///     while (loop.eventsPending()) loop.mainIteration();
+    void mainIteration() {
+        if (!timeouts.empty()) {
+            auto now  = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            MonoClock::now().time_since_epoch()).count();
+            auto copy = timeouts;
+            timeouts.clear();
+            for (auto& [key, timeout] : copy) {
+                if (key < now) {
+                    if (timeout.callback())
+                        addTimeout(timeout.span, timeout.callback);
+                } else {
+                    timeouts[key] = timeout;
+                }
+            }
+        }
+
+        for (auto& p : pollmap) {
+            if (p.revents == 0) continue;
+            if (!descriptorWatchers.count(p.fd)) continue;
+            if (!descriptorWatchers[p.fd].callback()) {
+                descriptorWatchers.erase(p.fd);
+                poll_dirty = true;
+            }
+        }
+
+        std::vector<Handler> to_run;
+        {
+            std::lock_guard<std::mutex> lock(idle_mutex);
+            to_run = std::move(idleHandlers);
+            idleHandlers.clear();
+        }
+        for (auto& h : to_run) {
+            if (h()) {
+                std::lock_guard<std::mutex> lock(idle_mutex);
+                idleHandlers.push_back(h);
+            }
+        }
+    }
+
+    /// Runs the main loop until stop() is called.
+    void run() {
+        bool prev = running;
+        running = true;
+        while (running) {
+            eventsPending(true);
+            mainIteration();
+        }
+        running = prev;
+    }
+
+    /// Stops the main loop.
+    void stop() {
+        running = false;
+        wakeup();
+    }
+};
+
+} // namespace nctui
