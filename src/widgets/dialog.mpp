@@ -13,6 +13,7 @@ module;
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <algorithm>
 #include <iostream>
 
 export module nctui:dialog;
@@ -39,6 +40,12 @@ private:
     int       button_len   = 0;
     const int button_space = 3;
     std::unique_ptr<ncpp::Plane> plane;
+
+    bool dragging      = false;
+    int  drag_start_x  = 0;
+    int  drag_start_y  = 0;
+    int  dialog_start_x = 0;
+    int  dialog_start_y = 0;
 
     /// Distributes the buttons evenly across the bottom of the dialog.
     void layoutButtons() {
@@ -104,6 +111,57 @@ public:
         button_len += b->width + button_space;
         add(b);
         layoutButtons();
+    }
+
+    /// Handles mouse events, adding drag-to-move on the top two rows.
+    ///
+    /// This terminal reports drag motion as NCTYPE_PRESS (not NCTYPE_REPEAT),
+    /// so within an active drag we treat any NCKEY_BUTTON1 event that is not
+    /// a release as movement.  NCTYPE_RELEASE always ends the drag.
+    void processMouse(const ncinput* ev) override {
+        if (!ev) return;
+
+        // Within an active drag, move the dialog on every BUTTON1 event
+        // regardless of evtype (terminals differ on whether drag motion
+        // arrives as PRESS or REPEAT).  Only RELEASE ends the drag.
+        if (dragging) {
+            if (ev->evtype == NCTYPE_RELEASE) {
+                dragging = false;
+
+                return;
+            }
+
+            if (ev->id == NCKEY_BUTTON1) {
+                x = std::clamp(dialog_start_x + ev->x - drag_start_x,
+                               3 - width, nctui::application::cols()  - 3);
+                y = std::clamp(dialog_start_y + ev->y - drag_start_y,
+                               3 - height, nctui::application::lines() - 3);
+                plane->move(y, x);
+
+                return;
+            }
+        }
+
+        // Start a drag when the primary button is pressed on the top two rows
+        // (outer padding row 0 and the frame border row 1 carrying the title).
+        // NCTYPE_UNKNOWN is treated as a press for compatibility with terminals
+        // that do not distinguish the two.
+        bool on_title_bar = ev->y >= y && ev->y <= y + 1 &&
+                            ev->x >= x && ev->x <  x + width;
+        bool is_press     = ev->evtype == NCTYPE_PRESS ||
+                            ev->evtype == NCTYPE_UNKNOWN;
+
+        if (on_title_bar && is_press && ev->id == NCKEY_BUTTON1) {
+            dragging       = true;
+            drag_start_x   = ev->x;
+            drag_start_y   = ev->y;
+            dialog_start_x = x;
+            dialog_start_y = y;
+
+            return;
+        }
+
+        Container::processMouse(ev);
     }
 
     void redraw() override {
@@ -173,6 +231,7 @@ public:
 
     /// Re-centres the dialog on resize and re-lays out the buttons.
     void doSizeChanged() override {
+        dragging = false;
         Container::doSizeChanged();
         x = (nctui::application::cols()  - width)  / 2;
         y = (nctui::application::lines() - height) / 3;
