@@ -13,6 +13,7 @@ module;
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <iostream>
 
 export module nctui:dialog;
 
@@ -37,6 +38,7 @@ private:
     std::vector<std::shared_ptr<Button>> buttons;
     int       button_len   = 0;
     const int button_space = 3;
+    std::unique_ptr<ncpp::Plane> plane;
 
     /// Distributes the buttons evenly across the bottom of the dialog.
     void layoutButtons() {
@@ -46,6 +48,15 @@ private:
             b->x = p;
             b->y = height - 5;
             p += b->width + button_space;
+        }
+    }
+
+    void createPlane() {
+        try {
+            plane = std::make_unique<ncpp::Plane>(*nctui::application::std_plane, height, width, y, x);
+        } catch (const std::exception& e) {
+            std::cerr << "nctui: failed to create dialog plane: " << e.what() << '\n';
+            exit(1);
         }
     }
 
@@ -72,6 +83,8 @@ public:
         containerColorFocus     = nctui::application::colorDialogFocus;
         containerColorHotNormal = nctui::application::colorDialogHotNormal;
         containerColorHotFocus  = nctui::application::colorDialogHotFocus;
+
+        createPlane();
     }
 
     /// Makes the default style for the dialog use the error colours.
@@ -94,47 +107,57 @@ public:
     }
 
     void redraw() override {
-        ncpp::Plane* plane = nctui::application::std_plane;
-        if (!plane) return;
+        ncpp::Plane* p = plane.get();
 
-        auto setColor = [&](uint64_t channels) {
-            plane->set_channels(channels);
-        };
-
-        // Clear the dialog area.
-        setColor(containerColorNormal);
-        for (int row = y; row < y + height; ++row) {
+        // All coordinates on the dialog's plane are local (origin at (0,0)).
+        p->set_channels(containerColorNormal);
+        for (int row = 0; row < height; ++row) {
             std::string blank(width, ' ');
-            plane->putstr(row, x, blank.c_str());
+            p->putstr(row, 0, blank.c_str());
         }
 
         // Draw the inner frame (inset by 1 cell because border == 2).
-        int fx = x + 1, fy = y + 1;
         int fw = width - 2, fh = height - 2;
         if (fw >= 2 && fh >= 2) {
-            plane->putstr(fy,          fx,          "┌");
-            plane->putstr(fy,          fx + fw - 1, "┐");
-            plane->putstr(fy + fh - 1, fx,          "└");
-            plane->putstr(fy + fh - 1, fx + fw - 1, "┘");
-            for (int col = fx + 1; col < fx + fw - 1; ++col) {
-                plane->putstr(fy,          col, "─");
-                plane->putstr(fy + fh - 1, col, "─");
+            p->putstr(1,      1,          "┌");
+            p->putstr(1,      1 + fw - 1, "┐");
+            p->putstr(1 + fh - 1, 1,          "└");
+            p->putstr(1 + fh - 1, 1 + fw - 1, "┘");
+            for (int col = 2; col < fw; ++col) {
+                p->putstr(1,          col, "─");
+                p->putstr(1 + fh - 1, col, "─");
             }
-            for (int row = fy + 1; row < fy + fh - 1; ++row) {
-                plane->putstr(row, fx,          "│");
-                plane->putstr(row, fx + fw - 1, "│");
+            for (int row = 2; row < fh; ++row) {
+                p->putstr(row, 1,          "│");
+                p->putstr(row, 1 + fw - 1, "│");
             }
         }
 
         // Draw the title centred in the top border line.
         if (!title.empty()) {
-            setColor(nctui::application::colorDialogNormal);
+            p->set_channels(nctui::application::colorDialogNormal);
             std::string label = " " + title + " ";
-            int tx = x + (width - static_cast<int>(label.length())) / 2;
-            plane->putstr(fy, tx, label.c_str());
+            int tx = (width - static_cast<int>(label.length())) / 2;
+            p->putstr(1, tx, label.c_str());
         }
 
-        redrawChildren(plane);
+        // Redirect std_plane to the dialog plane so that child widgets draw
+        // on it, and zero out the dialog's screen position so that
+        // redrawChildren() computes child offsets relative to the plane
+        // origin rather than the absolute screen position.
+        ncpp::Plane* saved_std = nctui::application::std_plane;
+        int saved_x = this->x, saved_y = this->y;
+        nctui::application::std_plane = p;
+        this->x = 0;
+        this->y = 0;
+        redrawChildren(p);
+        this->x = saved_x;
+        this->y = saved_y;
+        nctui::application::std_plane = saved_std;
+        // redrawChildren() called positionCursor() with zeroed-out x/y.
+        // Call it again now that the real coordinates are restored so the
+        // hardware cursor lands at the correct absolute screen position.
+        Container::positionCursor();
     }
 
     bool processKey(char32_t key) override {
@@ -153,6 +176,7 @@ public:
         Container::doSizeChanged();
         x = (nctui::application::cols()  - width)  / 2;
         y = (nctui::application::lines() - height) / 3;
+        plane->move(y, x);
         layoutButtons();
     }
 };
