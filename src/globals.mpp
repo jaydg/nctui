@@ -53,6 +53,11 @@ export namespace nctui::application {
     /// Optional callback invoked by runLoop() on each main-loop iteration.
     inline std::function<void()> iterationCallback;
 
+    /// Mouse drag capture. When set, all mouse events are routed here
+    /// before normal container dispatch. The handler clears this field
+    /// on NCTYPE_RELEASE to end the capture.
+    inline std::function<void(const ncinput*)> mouseDragHandler;
+
     // ----------------------------------------------------------------
     // Cursor visibility helpers
     //

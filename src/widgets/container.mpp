@@ -64,6 +64,9 @@ public:
     /// the class hierarchy, e.g. to recompute a custom layout.
     std::function<void()> onSizeChanged;
 
+    int effectiveMinWidth()  const override;
+    int effectiveMinHeight() const override;
+
     /// Constructs a container at (x, y) with the given width and height.
     ///
     /// The container colours are initialised from the global application
@@ -378,6 +381,22 @@ void Container::remove(std::shared_ptr<Widget> w) {
     std::erase(widgets, w);
     w->container = nullptr;
     if (widgets.empty()) canFocus(false);
+}
+
+int Container::effectiveMinWidth() const {
+    if (minWidth > 0) return minWidth;
+    int w = 0;
+    for (const auto& child : widgets)
+        w = std::max(w, child->x + child->effectiveMinWidth());
+    return w + border * 2;
+}
+
+int Container::effectiveMinHeight() const {
+    if (minHeight > 0) return minHeight;
+    int h = 0;
+    for (const auto& child : widgets)
+        h = std::max(h, child->y + child->effectiveMinHeight());
+    return h + border * 2;
 }
 
 } // namespace nctui

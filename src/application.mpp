@@ -108,7 +108,10 @@ inline bool handleInput() {
         auto& top = toplevels.back();
 
         if (::nckey_mouse_p(id)) {
-            top->processMouse(&ni);
+            if (nctui::application::mouseDragHandler)
+                nctui::application::mouseDragHandler(&ni);
+            else
+                top->processMouse(&ni);
             refresh();
             continue;
         }

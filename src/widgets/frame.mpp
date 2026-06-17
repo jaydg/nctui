@@ -9,8 +9,11 @@
 module;
 
 #include <ncpp/NotCurses.hh>
-#include <string>
+#include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
 
 export module nctui:frame;
 
@@ -25,12 +28,141 @@ export namespace nctui {
 /// A container that draws a Unicode box-drawing frame around its children
 /// and displays an optional title embedded in the top border line.
 ///
-/// The border width is always 1, so child coordinates are relative to the
-/// inner area (the first usable row and column inside the frame).
+/// Setting resizableH = true and calling setRightNeighbor() allows the user
+/// to drag the right border to resize this frame and its right neighbor.
+/// Setting resizableV = true and calling setBottomNeighbor() does the same
+/// for the bottom border.  Minimum sizes are derived from children via
+/// effectiveMinWidth()/effectiveMinHeight(); maxWidth/maxHeight provide hard
+/// upper bounds (0 = no maximum).
 class Frame : public Container {
+private:
+    std::weak_ptr<Frame> _rightNeighbor;
+    std::weak_ptr<Frame> _bottomNeighbor;
+    std::weak_ptr<Frame> _hSibling;  // frame in the same horizontal band
+
+    int _hDragStartX = 0;
+    int _hSelfStartW = 0;
+    int _hNbStartX   = 0;
+    int _hNbStartW   = 0;
+
+    int _vDragStartY = 0;
+    int _vSelfStartH = 0;
+    int _vNbStartY   = 0;
+    int _vNbStartH   = 0;
+
+    void _startHDrag(const ncinput* ev) {
+        auto nb = _rightNeighbor.lock();
+        if (!nb) return;
+        _hDragStartX = ev->x;
+        _hSelfStartW = width;
+        _hNbStartX   = nb->x;
+        _hNbStartW   = nb->width;
+        auto self = std::static_pointer_cast<Frame>(shared_from_this());
+        nctui::application::mouseDragHandler = [self](const ncinput* e) {
+            self->_doHDrag(e);
+        };
+    }
+
+    void _doHDrag(const ncinput* ev) {
+        if (ev->evtype == NCTYPE_RELEASE) {
+            nctui::application::mouseDragHandler = nullptr;
+            return;
+        }
+        if (ev->id != NCKEY_BUTTON1) return;
+
+        auto nb = _rightNeighbor.lock();
+        if (!nb) { nctui::application::mouseDragHandler = nullptr; return; }
+
+        int delta  = ev->x - _hDragStartX;
+        int total  = _hSelfStartW + _hNbStartW;
+        int min_me = effectiveMinWidth();
+        int min_nb = nb->effectiveMinWidth();
+
+        int new_w = std::clamp(_hSelfStartW + delta, min_me, total - min_nb);
+        if (maxWidth > 0)
+            new_w = std::min(new_w, maxWidth);
+        if (nb->maxWidth > 0)
+            new_w = std::max(new_w, total - nb->maxWidth);
+
+        this->width = new_w;
+        nb->x       = _hNbStartX + (new_w - _hSelfStartW);
+        nb->width   = total - new_w;
+
+        this->doSizeChanged();
+        nb->doSizeChanged();
+
+        if (onResized) onResized();
+    }
+
+    void _startVDrag(const ncinput* ev) {
+        auto nb = _bottomNeighbor.lock();
+        if (!nb) return;
+        _vDragStartY = ev->y;
+        _vSelfStartH = height;
+        _vNbStartY   = nb->y;
+        _vNbStartH   = nb->height;
+        auto self = std::static_pointer_cast<Frame>(shared_from_this());
+        nctui::application::mouseDragHandler = [self](const ncinput* e) {
+            self->_doVDrag(e);
+        };
+    }
+
+    void _doVDrag(const ncinput* ev) {
+        if (ev->evtype == NCTYPE_RELEASE) {
+            nctui::application::mouseDragHandler = nullptr;
+            return;
+        }
+        if (ev->id != NCKEY_BUTTON1) return;
+
+        auto nb = _bottomNeighbor.lock();
+        if (!nb) { nctui::application::mouseDragHandler = nullptr; return; }
+
+        int delta  = ev->y - _vDragStartY;
+        int total  = _vSelfStartH + _vNbStartH;
+        int min_me = effectiveMinHeight();
+        int min_nb = nb->effectiveMinHeight();
+
+        int new_h = std::clamp(_vSelfStartH + delta, min_me, total - min_nb);
+        if (maxHeight > 0)
+            new_h = std::min(new_h, maxHeight);
+        if (nb->maxHeight > 0)
+            new_h = std::max(new_h, total - nb->maxHeight);
+
+        this->height = new_h;
+        nb->y        = _vNbStartY + (new_h - _vSelfStartH);
+        nb->height   = total - new_h;
+
+        this->doSizeChanged();
+        nb->doSizeChanged();
+
+        // Synchronise H siblings — frames in the same horizontal band that
+        // must maintain the same vertical extent as self and nb respectively.
+        if (auto hs = _hSibling.lock()) {
+            hs->height = this->height;
+            hs->doSizeChanged();
+        }
+        if (auto hs_nb = nb->_hSibling.lock()) {
+            hs_nb->y      = nb->y;
+            hs_nb->height = nb->height;
+            hs_nb->doSizeChanged();
+        }
+
+        if (onResized) onResized();
+    }
+
 public:
     /// The title displayed in the top border line.
     std::string title;
+
+    /// Enable dragging the right border to resize this frame and its right neighbor.
+    bool resizableH = false;
+
+    /// Enable dragging the bottom border to resize this frame and its bottom neighbor.
+    bool resizableV = false;
+
+    /// Fired after each drag update (H or V). Use this to synchronise
+    /// frames that share a split line but are not directly connected as neighbors.
+    std::function<void()> onResized;
 
     /// Creates a Frame with the given title at position (0, 0) with zero
     /// initial size.
@@ -45,6 +177,50 @@ public:
         : Container(x, y, w, h), title(t)
     {
         border = 1;
+    }
+
+    /// Sets the frame to resize with when the right border is dragged.
+    void setRightNeighbor(std::shared_ptr<Frame> nb)  { _rightNeighbor  = nb; }
+
+    /// Sets the frame to resize with when the bottom border is dragged.
+    void setBottomNeighbor(std::shared_ptr<Frame> nb) { _bottomNeighbor = nb; }
+
+    /// Declares a sibling frame in the same horizontal band.
+    ///
+    /// When this frame (or its bottom neighbor) is resized by a vertical
+    /// border drag, the sibling (and the sibling of the bottom neighbor)
+    /// automatically receive the same height/y change — no onResized
+    /// callback required.  Set symmetrically on both frames in the pair.
+    void setHSibling(std::shared_ptr<Frame> s) { _hSibling = s; }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev) return;
+
+        // Only initiate a drag on a clean left-button press.
+        if (ev->evtype == NCTYPE_PRESS && ev->id == NCKEY_BUTTON1) {
+            if (resizableH && !_rightNeighbor.expired()) {
+                // Right border — exclude corners so adjacent V drags still work.
+                bool on_border = (ev->x == this->x + this->width - 1) &&
+                                 (ev->y > this->y) &&
+                                 (ev->y < this->y + this->height - 1);
+                if (on_border) {
+                    _startHDrag(ev);
+                    return;
+                }
+            }
+            if (resizableV && !_bottomNeighbor.expired()) {
+                // Bottom border — exclude corners.
+                bool on_border = (ev->y == this->y + this->height - 1) &&
+                                 (ev->x > this->x) &&
+                                 (ev->x < this->x + this->width - 1);
+                if (on_border) {
+                    _startVDrag(ev);
+                    return;
+                }
+            }
+        }
+
+        Container::processMouse(ev);
     }
 
     void redraw() override {
@@ -80,7 +256,7 @@ public:
         // Embed the title in the top border line.
         // Switch to the dialog-normal colour when the frame has focus.
         if (!title.empty() && width > 4) {
-            if (hasFocus()) {   // hasFocus() is a method call, not a field access
+            if (hasFocus()) {
                 plane->set_channels(nctui::theme::current().colorDialogNormal);
             }
 

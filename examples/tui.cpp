@@ -424,6 +424,29 @@ int main() {
         layoutDialogs(frame, fstatus, fdetails, fprogress);
     };
 
+    // Enable drag-resize on the internal frame borders.
+    //
+    // Horizontal splits: frame ↔ fstatus (top row), fdetails ↔ fprogress (bottom row).
+    frame->resizableH = true;
+    frame->setRightNeighbor(fstatus);
+
+    fdetails->resizableH = true;
+    fdetails->setRightNeighbor(fprogress);
+
+    // Vertical splits: frame ↔ fdetails (left column), fstatus ↔ fprogress (right column).
+    // H-sibling pairs ensure that dragging either column's divider moves the
+    // shared horizontal split line in both columns simultaneously.
+    frame->resizableV = true;
+    frame->setBottomNeighbor(fdetails);
+    frame->setHSibling(fstatus);
+
+    fstatus->resizableV = true;
+    fstatus->setBottomNeighbor(fprogress);
+    fstatus->setHSibling(frame);
+
+    fdetails->setHSibling(fprogress);
+    fprogress->setHSibling(fdetails);
+
     updateStatus(it);
 
     nctui::application::run(top);
