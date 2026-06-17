@@ -113,6 +113,17 @@ public:
                 p->putstr(r, 0,         "│");
                 p->putstr(r, width - 1, "│");
             }
+
+            // Scroll indicators: show ▲/▼ for extra items.
+            if (list && list->provider) {
+                int len  = static_cast<int>(list->provider->length());
+                int ltop = list->scrollTop();
+                int pos  = width - 4;
+                if (ltop > 0)
+                    p->putstr(0,          pos,  " ▲ ");
+                if (ltop + list->height < len)
+                    p->putstr(height - 1, pos, " ▼ ");
+            }
         }
 
         // Mirror Dialog: redirect std_plane to our plane and zero out our

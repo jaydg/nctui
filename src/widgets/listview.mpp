@@ -144,14 +144,22 @@ public:
         return _selected;
     }
 
+    /// Returns the index of the first visible row (scroll offset).
+    int scrollTop() const { return top; }
+
     /// Sets the index of the currently selected item.
     ///
-    /// Fires selectedChanged() on the provider and redraws the widget.
+    /// Scrolls the viewport so the selection is visible, fires
+    /// selectedChanged() on the provider, and redraws the widget.
     /// Throws std::out_of_range if value is out of bounds.
     void selected(int value) {
         if (!provider || value >= static_cast<int>(provider->length()))
             throw std::out_of_range("Invalid ListView index");
         _selected = value;
+        if (_selected < top)
+            top = _selected;
+        else if (_selected >= top + height)
+            top = _selected - height + 1;
         notifySelectedChanged();
         redraw();
     }
