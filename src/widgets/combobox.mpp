@@ -168,6 +168,12 @@ public:
     void processMouse(const ncinput* ev) override {
         if (!ev) return;
 
+        // Scroll-wheel events must reach the list, not close the popup.
+        if (ev->id == NCKEY_BUTTON4 || ev->id == NCKEY_BUTTON5) {
+            Container::processMouse(ev);
+            return;
+        }
+
         if (ev->evtype == NCTYPE_RELEASE || ev->evtype == NCTYPE_UNKNOWN) {
             bool inside = ev->x >= x && ev->x < x + width &&
                           ev->y >= y && ev->y < y + height;

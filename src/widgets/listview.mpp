@@ -268,11 +268,33 @@ public:
     void processMouse(const ncinput* ev) override {
         if (!ev || !provider) return;
 
+        int len = static_cast<int>(provider->length());
+
+        // Mouse wheel scroll: BUTTON4 = up, BUTTON5 = down.
+        if (ev->id == NCKEY_BUTTON4) {
+            if (_selected > 0) {
+                _selected--;
+                if (_selected < top) top = _selected;
+                notifySelectedChanged();
+                redraw();
+            }
+            return;
+        }
+        if (ev->id == NCKEY_BUTTON5) {
+            if (_selected + 1 < len) {
+                _selected++;
+                if (_selected >= top + height) top++;
+                notifySelectedChanged();
+                redraw();
+            }
+            return;
+        }
+
         if (ev->evtype == NCTYPE_RELEASE) return;
 
         int rel_y = ev->y - y;
         if (rel_y < 0) return;
-        if (rel_y + top >= static_cast<int>(provider->length())) return;
+        if (rel_y + top >= len) return;
 
         // selected() setter fires selectedChanged() and redraws.
         selected(rel_y + top);
