@@ -1,0 +1,42 @@
+# Tokyo Night Day
+# Based on folke/tokyonight.nvim — day (light) variant
+# https://github.com/folke/tokyonight.nvim
+#
+# Palette used:
+#   bg       #e1e2e7   bg_dark  #d0d5e3   bg_highlight #c4c8da
+#   fg       #3760bf   blue     #2e7de9   teal     #118c74
+#   orange   #b15c00   red      #f52a65   purple   #7847bd
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — pale blue-grey with dark-blue text
+normal            = 3760bf:e1e2e7
+# Focused widget — pale bg on vivid blue accent
+focus             = e1e2e7:2e7de9
+# Keyboard shortcut in unfocused widget — burnt orange on pale bg
+hot_normal        = b15c00:e1e2e7
+# Keyboard shortcut in focused widget — orange on vivid blue
+hot_focus         = b15c00:2e7de9
+
+# Dialog background — slightly darker panel (bg_dark)
+dialog_normal     = 3760bf:d0d5e3
+# Focused widget inside dialog — pale bg on teal accent
+dialog_focus      = e1e2e7:118c74
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = b15c00:d0d5e3
+# Shortcut in focused dialog widget
+dialog_hot_focus  = b15c00:118c74
+
+# Menu bar — text on bg_highlight (darkest panel shade)
+menu              = 3760bf:c4c8da
+# Shortcut in menu entry
+menu_hot          = b15c00:c4c8da
+# Selected menu entry — pale on vivid blue
+menu_selected     = e1e2e7:2e7de9
+# Shortcut in selected menu entry
+menu_hot_selected = b15c00:2e7de9
+
+# Error dialog — pale bg on red
+error             = e1e2e7:f52a65
+# Focused widget in error dialog — pale on purple
+error_focus       = e1e2e7:7847bd

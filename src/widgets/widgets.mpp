@@ -16,6 +16,7 @@ module;
 export module nctui:widget;
 
 import :globals;
+import :theme;
 
 export namespace nctui {
 
@@ -197,22 +198,22 @@ void Widget::setFocus(bool v) {
 uint64_t Widget::colorNormal()    const {
     return (container && nctui::widget_colors::getNormal)
         ? nctui::widget_colors::getNormal(container)
-        : nctui::application::colorNormal;
+        : nctui::theme::current().colorNormal;
 }
 uint64_t Widget::colorFocus()     const {
     return (container && nctui::widget_colors::getFocus)
         ? nctui::widget_colors::getFocus(container)
-        : nctui::application::colorFocus;
+        : nctui::theme::current().colorFocus;
 }
 uint64_t Widget::colorHotNormal() const {
     return (container && nctui::widget_colors::getHotNormal)
         ? nctui::widget_colors::getHotNormal(container)
-        : nctui::application::colorHotNormal;
+        : nctui::theme::current().colorHotNormal;
 }
 uint64_t Widget::colorHotFocus()  const {
     return (container && nctui::widget_colors::getHotFocus)
         ? nctui::widget_colors::getHotFocus(container)
-        : nctui::application::colorHotFocus;
+        : nctui::theme::current().colorHotFocus;
 }
 
 void Widget::positionCursor() {

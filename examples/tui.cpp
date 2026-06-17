@@ -4,6 +4,7 @@
 //
 import nctui;
 
+#include <functional>
 #include <memory>
 #include <vector>
 #include <string>
@@ -195,7 +196,9 @@ static void layoutDialogs(
 // Options dialog
 // -----------------------------------------------------------------------
 static void optionsDialog() {
-    auto d = std::make_shared<nctui::Dialog>(62, 18, "Options");
+    static int s_theme_selection = 0;
+
+    auto d = std::make_shared<nctui::Dialog>(62, 22, "Options");
 
     d->add(std::make_shared<nctui::Label>(1,  1, "  Download Directory:"));
     d->add(std::make_shared<nctui::Label>(1,  3, "         Listen Port:"));
@@ -204,6 +207,7 @@ static void optionsDialog() {
     d->add(std::make_shared<nctui::Label>(1,  7, "Download Speed Limit:"));
     d->add(std::make_shared<nctui::Label>(35, 7, "kB/s"));
     d->add(std::make_shared<nctui::Label>(1,  9, "        Stealth Mode:"));
+    d->add(std::make_shared<nctui::Label>(1, 13, "         Color Theme:"));
 
     auto download_dir   = std::make_shared<nctui::Entry>(24, 1, 30, "~/Download");
     auto listen_port    = std::make_shared<nctui::Entry>(24, 3,  6, "34");
@@ -214,11 +218,44 @@ static void optionsDialog() {
         24, 9,
         std::vector<std::string>{"Off", "Partial", "Full"});
 
+    // Theme combo box — value is the theme file path, empty = built-in default.
+    auto theme_model = std::make_shared<nctui::ComboBoxModel<std::string>>();
+    theme_model->add("",                                  "Default (built-in)");
+    theme_model->add("lib/themes/everforest-dark.theme",  "Everforest Dark");
+    theme_model->add("lib/themes/everforest-light.theme", "Everforest Light");
+    theme_model->add("lib/themes/gruvbox-dark.theme",     "Gruvbox Dark");
+    theme_model->add("lib/themes/gruvbox-light.theme",    "Gruvbox Light");
+    theme_model->add("lib/themes/tokyonight-night.theme", "Tokyo Night");
+    theme_model->add("lib/themes/tokyonight-day.theme",   "Tokyo Day");
+    theme_model->add("lib/themes/mellow-dark.theme",      "Mellow Dark");
+    theme_model->add("lib/themes/mellow-light.theme",     "Mellow Light");
+    theme_model->add("lib/themes/flexoki-dark.theme",     "Flexoki Dark");
+    theme_model->add("lib/themes/flexoki-light.theme",    "Flexoki Light");
+    theme_model->add("lib/themes/token-dark.theme",       "Token Dark");
+    theme_model->add("lib/themes/token-light.theme",      "Token Light");
+
+    theme_model->selected(s_theme_selection);
+
+    auto theme_combo = std::make_shared<nctui::ComboBox<std::string>>(
+        24, 13, 30, theme_model);
+
+    // Snapshot the theme on entry so Cancel can restore it.
+    nctui::Theme saved_theme = nctui::theme::current();
+
+    theme_combo->onChanged = [&]() {
+        const std::string& path = theme_model->value();
+        if (path.empty())
+            nctui::theme::apply(nctui::theme::defaultTheme());
+        else
+            nctui::theme::apply(nctui::theme::load(path));
+    };
+
     d->add(download_dir);
     d->add(listen_port);
     d->add(upload_limit);
     d->add(download_limit);
     d->add(stealth_mode);
+    d->add(theme_combo);
 
     bool ok = false;
 
@@ -230,12 +267,18 @@ static void optionsDialog() {
     d->addButton(bok);
 
     auto bcancel = std::make_shared<nctui::Button>("Cancel");
-    bcancel->clicked = [&d_running = d->running]() { d_running = false; };
+    bcancel->clicked = [&saved_theme, &d_running = d->running]() {
+        nctui::theme::apply(saved_theme);
+        d_running = false;
+    };
     d->addButton(bcancel);
 
     nctui::application::run(d);
 
-    // Validation runs after the dialog closes
+    if (ok)
+        s_theme_selection = theme_model->selected();
+
+    // Validation runs after the dialog closes.
     if (ok) {
         try {
             int port = std::stoi(listen_port->text());
@@ -248,7 +291,7 @@ static void optionsDialog() {
             return;
         }
 
-        // Expand leading ~ to $HOME
+        // Expand leading ~ to $HOME.
         std::string path = download_dir->text();
         if (!path.empty() && path[0] == '~') {
             const char* home = std::getenv("HOME");
@@ -325,8 +368,8 @@ int main() {
     frame->add(badd);
 
     auto boptions = std::make_shared<nctui::Button>(9, 1, "Options");
-    boptions->clicked = []() { optionsDialog(); };
     frame->add(boptions);
+    // boptions->clicked is wired up below, after all frames are declared.
 
     auto bquit = std::make_shared<nctui::Button>(21, 1, "Quit");
     bquit->clicked = [&top_running = top->running]() { top_running = false; };
@@ -361,6 +404,9 @@ int main() {
     // Status panel (top-right quadrant).
     auto fstatus = setupStatus();
     top->add(fstatus);
+
+    // Wire up Options button now that all frames are in scope.
+    boptions->clicked = []() { optionsDialog(); };
 
     // Timer: update status and log every second.
     int it = 0;

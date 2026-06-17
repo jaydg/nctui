@@ -1,0 +1,42 @@
+# Mellow Light
+# Based on mellow-theme/mellow.nvim — light variant
+# https://github.com/mellow-theme/mellow.nvim
+#
+# Palette used:
+#   bg       #f7f7f7   gray01   #e6e6e7   gray02   #d3d3d4
+#   fg       #4d4b65   blue     #174c97   green    #598c15
+#   yellow   #c65c00   red      #e05439   magenta  #bf386e
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — near-white with muted purple-grey text
+normal            = 4d4b65:f7f7f7
+# Focused widget — near-white on deep navy accent
+focus             = f7f7f7:174c97
+# Keyboard shortcut in unfocused widget — dark amber on near-white
+hot_normal        = c65c00:f7f7f7
+# Keyboard shortcut in focused widget — amber on navy
+hot_focus         = c65c00:174c97
+
+# Dialog background — very light grey (gray01)
+dialog_normal     = 4d4b65:e6e6e7
+# Focused widget inside dialog — near-white on dark olive-green
+dialog_focus      = f7f7f7:598c15
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = c65c00:e6e6e7
+# Shortcut in focused dialog widget
+dialog_hot_focus  = c65c00:598c15
+
+# Menu bar — text on gray02 (slightly more tinted)
+menu              = 4d4b65:d3d3d4
+# Shortcut in menu entry
+menu_hot          = c65c00:d3d3d4
+# Selected menu entry — near-white on navy
+menu_selected     = f7f7f7:174c97
+# Shortcut in selected menu entry
+menu_hot_selected = c65c00:174c97
+
+# Error dialog — near-white on muted orange-red
+error             = f7f7f7:e05439
+# Focused widget in error dialog — near-white on dark magenta
+error_focus       = f7f7f7:bf386e

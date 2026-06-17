@@ -1,0 +1,42 @@
+# Token Light
+# Based on ThorstenRhau/token — light variant
+# https://github.com/ThorstenRhau/token
+#
+# Palette used:
+#   bg3      #faf9f5   bg4      #f0efeb   bg5      #eae9e5
+#   fg0      #2a2920   accent   #9a4929   blue     #527594
+#   cyan     #2d6c6c   red      #b05555   accent2  #876032
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — warm near-white with warm near-black text
+normal            = 2a2920:faf9f5
+# Focused widget — near-white on steel-blue accent
+focus             = faf9f5:527594
+# Keyboard shortcut in unfocused widget — terracotta on near-white
+hot_normal        = 9a4929:faf9f5
+# Keyboard shortcut in focused widget — terracotta on steel-blue
+hot_focus         = 9a4929:527594
+
+# Dialog background — warm off-white panel (bg4)
+dialog_normal     = 2a2920:f0efeb
+# Focused widget inside dialog — near-white on dark teal accent
+dialog_focus      = faf9f5:2d6c6c
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = 9a4929:f0efeb
+# Shortcut in focused dialog widget
+dialog_hot_focus  = 9a4929:2d6c6c
+
+# Menu bar — text on bg5 (slightly more saturated warm grey)
+menu              = 2a2920:eae9e5
+# Shortcut in menu entry
+menu_hot          = 9a4929:eae9e5
+# Selected menu entry — near-white on steel-blue
+menu_selected     = faf9f5:527594
+# Shortcut in selected menu entry
+menu_hot_selected = 9a4929:527594
+
+# Error dialog — near-white on muted red
+error             = faf9f5:b05555
+# Focused widget in error dialog — near-white on amber
+error_focus       = faf9f5:876032

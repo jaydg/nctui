@@ -25,6 +25,7 @@ import :widget;
 import :container;
 import :globals;
 import :keys;
+import :theme;
 
 export namespace nctui {
 
@@ -150,15 +151,15 @@ public:
         int itemCount = static_cast<int>(barItems->children.size());
 
         // Frame around the drop-down in the menu colour.
-        setColor(plane, nctui::application::colorMenu);
+        setColor(plane, nctui::theme::current().colorMenu);
         Widget::drawFrame(plane, x, y, width, height, true);
 
         for (int i = 0; i < itemCount; ++i) {
             auto& item = barItems->children[i];
 
             uint64_t rowColor = (i == current)
-                ? nctui::application::colorMenuSelected
-                : nctui::application::colorMenu;
+                ? nctui::theme::current().colorMenuSelected
+                : nctui::theme::current().colorMenu;
 
             // Fill the row (between the frame borders) with the row colour.
             setColor(plane, rowColor);
@@ -173,8 +174,8 @@ public:
 
             // Title with hot-key highlight.
             uint64_t hotColor = (i == current)
-                ? nctui::application::colorMenuHotSelected
-                : nctui::application::colorMenuHot;
+                ? nctui::theme::current().colorMenuHotSelected
+                : nctui::theme::current().colorMenuHot;
             drawHotString(plane, y + i + 1, x + 1, item->title(), hotColor, rowColor);
 
             // Right-aligned help text.
@@ -297,7 +298,7 @@ public:
         if (!plane) return;
 
         // Fill the whole bar row with the focus colour.
-        setColor(plane, nctui::application::colorFocus);
+        setColor(plane, nctui::theme::current().colorFocus);
         std::string blank(width, ' ');
         plane->putstr(y, x, blank.c_str());
 
@@ -305,11 +306,11 @@ public:
         for (std::size_t i = 0; i < menus.size(); ++i) {
             uint64_t hotColor, normalColor;
             if (static_cast<int>(i) == selected) {
-                hotColor    = nctui::application::colorMenuHotSelected;
-                normalColor = nctui::application::colorMenuSelected;
+                hotColor    = nctui::theme::current().colorMenuHotSelected;
+                normalColor = nctui::theme::current().colorMenuSelected;
             } else {
-                hotColor    = nctui::application::colorMenuHot;
-                normalColor = nctui::application::colorMenu;
+                hotColor    = nctui::theme::current().colorMenuHot;
+                normalColor = nctui::theme::current().colorMenu;
             }
             drawHotString(plane, y, x + pos, menus[i]->title(), hotColor, normalColor);
             pos += menus[i]->width() + 3;

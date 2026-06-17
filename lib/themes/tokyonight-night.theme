@@ -1,0 +1,42 @@
+# Tokyo Night (Night)
+# Based on folke/tokyonight.nvim — clean, dark Neovim theme
+# https://github.com/folke/tokyonight.nvim
+#
+# Palette used:
+#   bg       #1a1b26   bg_high  #292e42   terminal #414868
+#   fg       #c0caf5   yellow   #e0af68   orange   #ff9e64
+#   blue     #7aa2f7   cyan     #7dcfff   red1     #db4b4b
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — cool lavender-white on deep blue-black
+normal            = c0caf5:1a1b26
+# Focused widget — dark text on Tokyo Night blue
+focus             = 1a1b26:7aa2f7
+# Keyboard shortcut in unfocused widget — warm amber on dark bg
+hot_normal        = e0af68:1a1b26
+# Keyboard shortcut in focused widget — amber on blue
+hot_focus         = e0af68:7aa2f7
+
+# Dialog background — lavender on bg_highlight (slightly lifted from main bg)
+dialog_normal     = c0caf5:292e42
+# Focused widget inside a dialog — dark on cyan
+dialog_focus      = 1a1b26:7dcfff
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = e0af68:292e42
+# Shortcut in focused dialog widget
+dialog_hot_focus  = e0af68:7dcfff
+
+# Menu bar — lavender on terminal_black (the traditional menu-bar shade)
+menu              = c0caf5:414868
+# Shortcut in menu entry
+menu_hot          = e0af68:414868
+# Selected menu entry — dark on blue (mirrors focus)
+menu_selected     = 1a1b26:7aa2f7
+# Shortcut in selected menu entry
+menu_hot_selected = e0af68:7aa2f7
+
+# Error dialog — lavender on dark red
+error             = c0caf5:db4b4b
+# Focused widget in error dialog — dark on orange
+error_focus       = 1a1b26:ff9e64

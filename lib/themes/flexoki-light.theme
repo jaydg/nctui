@@ -1,0 +1,42 @@
+# Flexoki Light (Paper)
+# Based on kepano/flexoki-neovim — light variant
+# https://github.com/kepano/flexoki-neovim
+#
+# Palette used:
+#   paper    #FFFCF0   ui       #E6E4D9   ui-2     #DAD8CE
+#   tx       #100F0F   yellow   #AD8301   blue     #205EA6
+#   cyan     #24837B   red      #AF3029   magenta  #A02F6F
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — warm paper-white with near-black text
+normal            = 100F0F:FFFCF0
+# Focused widget — paper-white on deep blue accent
+focus             = FFFCF0:205EA6
+# Keyboard shortcut in unfocused widget — golden yellow on paper
+hot_normal        = AD8301:FFFCF0
+# Keyboard shortcut in focused widget — gold on deep blue
+hot_focus         = AD8301:205EA6
+
+# Dialog background — slightly off-white panel (ui)
+dialog_normal     = 100F0F:E6E4D9
+# Focused widget inside dialog — paper on teal accent
+dialog_focus      = FFFCF0:24837B
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = AD8301:E6E4D9
+# Shortcut in focused dialog widget
+dialog_hot_focus  = AD8301:24837B
+
+# Menu bar — text on ui-2 (warm grey)
+menu              = 100F0F:DAD8CE
+# Shortcut in menu entry
+menu_hot          = AD8301:DAD8CE
+# Selected menu entry — paper on deep blue
+menu_selected     = FFFCF0:205EA6
+# Shortcut in selected menu entry
+menu_hot_selected = AD8301:205EA6
+
+# Error dialog — paper on deep red
+error             = FFFCF0:AF3029
+# Focused widget in error dialog — paper on dark magenta
+error_focus       = FFFCF0:A02F6F

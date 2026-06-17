@@ -1,0 +1,44 @@
+# Mellow Dark
+# Based on mellow-theme/mellow.nvim — a warm, pastel dark theme
+# https://github.com/mellow-theme/mellow.nvim
+#
+# Palette used:
+#   bg          #161617   bg_dark     #131314
+#   black       #27272a   bright_blk  #353539
+#   fg          #c9c7cd   blue        #aca1cf
+#   green       #90b99f   yellow      #e6b99d
+#   red         #f5a191   magenta     #e29eca
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — cool off-white on near-black
+normal            = c9c7cd:161617
+# Focused widget — dark on muted lavender-blue
+focus             = 161617:aca1cf
+# Keyboard shortcut in unfocused widget — warm peach on dark bg
+hot_normal        = e6b99d:161617
+# Keyboard shortcut in focused widget — warm peach on lavender
+hot_focus         = e6b99d:aca1cf
+
+# Dialog background — fg on the slightly lighter black
+dialog_normal     = c9c7cd:27272a
+# Focused widget inside a dialog — dark on sage green
+dialog_focus      = 161617:90b99f
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = e6b99d:27272a
+# Shortcut in focused dialog widget
+dialog_hot_focus  = e6b99d:90b99f
+
+# Menu bar — fg on bright_black (the classic menu-bar lift)
+menu              = c9c7cd:353539
+# Shortcut in menu entry
+menu_hot          = e6b99d:353539
+# Selected menu entry — dark on lavender (mirrors focus)
+menu_selected     = 161617:aca1cf
+# Shortcut in selected menu entry
+menu_hot_selected = e6b99d:aca1cf
+
+# Error dialog — dark bg on salmon-pink (red is very light in mellow)
+error             = 161617:f5a191
+# Focused widget in error dialog — dark on magenta-pink
+error_focus       = 161617:e29eca

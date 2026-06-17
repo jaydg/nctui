@@ -1,0 +1,42 @@
+# Everforest Light (Medium)
+# Based on sainnhe/everforest — "Comfortable & Pleasant Color Scheme"
+# https://github.com/sainnhe/everforest
+#
+# Palette used:
+#   bg0      #FDF6E3   bg1      #F4F0D9   bg2      #EFEBD4
+#   fg       #5C6A72   yellow   #DFA000   green    #8DA101
+#   aqua     #35A77C   red      #F85552   blue     #3A94C5
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — warm cream with cool-green text
+normal            = 5C6A72:FDF6E3
+# Focused widget — cream on olive-green accent
+focus             = FDF6E3:8DA101
+# Keyboard shortcut in unfocused widget — gold on warm cream
+hot_normal        = DFA000:FDF6E3
+# Keyboard shortcut in focused widget — gold on olive-green
+hot_focus         = DFA000:8DA101
+
+# Dialog background — warm cream on a slightly tinted shade (bg1)
+dialog_normal     = 5C6A72:F4F0D9
+# Focused widget inside dialog — cream on aqua accent
+dialog_focus      = FDF6E3:35A77C
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = DFA000:F4F0D9
+# Shortcut in focused dialog widget
+dialog_hot_focus  = DFA000:35A77C
+
+# Menu bar — text on bg2 (slightly greener)
+menu              = 5C6A72:EFEBD4
+# Shortcut in menu entry
+menu_hot          = DFA000:EFEBD4
+# Selected menu entry — cream on olive-green
+menu_selected     = FDF6E3:8DA101
+# Shortcut in selected menu entry
+menu_hot_selected = DFA000:8DA101
+
+# Error dialog — cream on muted red
+error             = FDF6E3:F85552
+# Focused widget in error dialog — cream on orange
+error_focus       = FDF6E3:F57D26

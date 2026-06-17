@@ -18,8 +18,15 @@ export module nctui:container;
 
 import :widget;
 import :globals;
+import :theme;
 
 export namespace nctui {
+
+/// Controls which theme color set a container uses when syncTheme() is called.
+///
+/// Dialog-role containers (Dialog, ComboBoxPopup) use the dialog palette;
+/// all others use the normal application palette.
+enum class ColorRole { Normal, Dialog };
 
 /// Container widget — can host other widgets.
 ///
@@ -33,6 +40,9 @@ private:
 
 public:
     bool running = false;
+
+    /// Determines which theme color set syncTheme() applies to this container.
+    ColorRole colorRole = ColorRole::Normal;
 
     /// Colour used to render unfocused children of this container.
     uint64_t containerColorNormal    = 0;
@@ -57,12 +67,12 @@ public:
     /// Constructs a container at (x, y) with the given width and height.
     ///
     /// The container colours are initialised from the global application
-    /// colour palette (matching the D original: Application.color*).
+    /// colour palette.
     Container(int x, int y, int w, int h) : Widget(x, y, w, h) {
-        containerColorNormal    = nctui::application::colorNormal;
-        containerColorFocus     = nctui::application::colorFocus;
-        containerColorHotNormal = nctui::application::colorHotNormal;
-        containerColorHotFocus  = nctui::application::colorHotFocus;
+        containerColorNormal    = nctui::theme::current().colorNormal;
+        containerColorFocus     = nctui::theme::current().colorFocus;
+        containerColorHotNormal = nctui::theme::current().colorHotNormal;
+        containerColorHotFocus  = nctui::theme::current().colorHotFocus;
     }
 
     // ----------------------------------------------------------------
@@ -71,6 +81,13 @@ public:
 
     /// Called once on the top-level container before the run loop starts.
     virtual void prepare() {}
+
+    /// Refreshes containerColor* fields from the current theme and
+    /// propagates recursively to all Container children.
+    ///
+    /// Called automatically by the application when nctui::theme::apply()
+    /// is invoked. The color set used is determined by colorRole.
+    virtual void syncTheme();
 
     /// Called whenever the terminal is resized. Delegates to doSizeChanged()
     /// and also fires the onSizeChanged callback if one has been set.
@@ -81,7 +98,7 @@ public:
     // ----------------------------------------------------------------
 
     /// Routes a hot-key event first to the focused widget, then to all
-    /// other children (D original order).
+    /// other children.
     bool processHotKey(char32_t ch) override {
         if (_focused && _focused->processHotKey(ch)) return true;
         for (auto& w : widgets) {
@@ -332,6 +349,27 @@ void Container::positionCursor() {
     _focused->positionCursor();
     _focused->x = saved_x;
     _focused->y = saved_y;
+}
+
+void Container::syncTheme() {
+    auto& t = nctui::theme::current();
+
+    if (colorRole == ColorRole::Dialog) {
+        containerColorNormal    = t.colorDialogNormal;
+        containerColorFocus     = t.colorDialogFocus;
+        containerColorHotNormal = t.colorDialogHotNormal;
+        containerColorHotFocus  = t.colorDialogHotFocus;
+    } else {
+        containerColorNormal    = t.colorNormal;
+        containerColorFocus     = t.colorFocus;
+        containerColorHotNormal = t.colorHotNormal;
+        containerColorHotFocus  = t.colorHotFocus;
+    }
+
+    for (auto& w : widgets) {
+        if (auto c = std::dynamic_pointer_cast<Container>(w))
+            c->syncTheme();
+    }
 }
 
 void Container::remove(std::shared_ptr<Widget> w) {

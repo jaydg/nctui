@@ -16,6 +16,7 @@ export module nctui:frame;
 
 import :container;
 import :globals;
+import :theme;
 
 export namespace nctui {
 
@@ -80,7 +81,7 @@ public:
         // Switch to the dialog-normal colour when the frame has focus.
         if (!title.empty() && width > 4) {
             if (hasFocus()) {   // hasFocus() is a method call, not a field access
-                plane->set_channels(nctui::application::colorDialogNormal);
+                plane->set_channels(nctui::theme::current().colorDialogNormal);
             }
 
             std::string label = " " + title + " ";

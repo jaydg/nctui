@@ -1,0 +1,42 @@
+# Gruvbox Dark
+# Based on morhetz/gruvbox — retro groove color scheme
+# https://github.com/morhetz/gruvbox
+#
+# Palette used:
+#   dark0    #282828   dark1    #3c3836   dark2    #504945
+#   light1   #ebdbb2   yellow   #fabd2f
+#   blue     #83a598   aqua     #8ec07c   red      #cc241d
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — warm cream on near-black
+normal            = ebdbb2:282828
+# Focused widget — dark text on gruvbox blue-teal
+focus             = 282828:83a598
+# Keyboard shortcut in unfocused widget — bright yellow on dark bg
+hot_normal        = fabd2f:282828
+# Keyboard shortcut in focused widget — bright yellow on blue-teal
+hot_focus         = fabd2f:83a598
+
+# Dialog background — cream on dark1 (slightly warmer than main bg)
+dialog_normal     = ebdbb2:3c3836
+# Focused widget inside a dialog — dark on aqua
+dialog_focus      = 282828:8ec07c
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = fabd2f:3c3836
+# Shortcut in focused dialog widget
+dialog_hot_focus  = fabd2f:8ec07c
+
+# Menu bar — cream on dark2 (medium dark brown-grey)
+menu              = ebdbb2:504945
+# Shortcut in menu entry
+menu_hot          = fabd2f:504945
+# Selected menu entry — dark on blue-teal (mirrors focus)
+menu_selected     = 282828:83a598
+# Shortcut in selected menu entry
+menu_hot_selected = fabd2f:83a598
+
+# Error dialog — cream on deep gruvbox red
+error             = ebdbb2:cc241d
+# Focused widget in error dialog — dark on bright yellow (high contrast)
+error_focus       = 282828:fabd2f

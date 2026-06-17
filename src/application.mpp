@@ -27,6 +27,7 @@ import :mainloop;
 import :keys;
 import :container;
 import :globals;
+import :theme;
 
 export namespace nctui::application {
 
@@ -190,6 +191,15 @@ inline void init() {
     };
     cursor_hide = []() {
         if (nc) ::notcurses_cursor_disable(*nc);
+    };
+
+    // When the theme changes, propagate new colors to every active container
+    // tree and redraw.  This lets callers use nctui::theme::apply() as a
+    // one-liner without any manual color-cache maintenance.
+    nctui::theme::onChange = []() {
+        for (auto& c : toplevels)
+            c->syncTheme();
+        refresh();
     };
 
     mainLoop = std::make_shared<MainLoop>();

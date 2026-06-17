@@ -22,6 +22,7 @@ import :container;
 import :button;
 import :globals;
 import :keys;
+import :theme;
 
 export namespace nctui {
 
@@ -82,24 +83,25 @@ public:
             w, h),
           title(t)
     {
-        border = 2;
+        border    = 2;
+        colorRole = ColorRole::Dialog;
 
         // Initialise colours from the dialog colour scheme, overriding the
         // Container defaults which come from the normal (non-dialog) palette.
-        containerColorNormal    = nctui::application::colorDialogNormal;
-        containerColorFocus     = nctui::application::colorDialogFocus;
-        containerColorHotNormal = nctui::application::colorDialogHotNormal;
-        containerColorHotFocus  = nctui::application::colorDialogHotFocus;
+        containerColorNormal    = nctui::theme::current().colorDialogNormal;
+        containerColorFocus     = nctui::theme::current().colorDialogFocus;
+        containerColorHotNormal = nctui::theme::current().colorDialogHotNormal;
+        containerColorHotFocus  = nctui::theme::current().colorDialogHotFocus;
 
         createPlane();
     }
 
     /// Makes the default style for the dialog use the error colours.
     void errorColors() {
-        containerColorNormal    = nctui::application::colorError;
-        containerColorFocus     = nctui::application::colorErrorFocus;
-        containerColorHotNormal = nctui::application::colorHotNormal;
-        containerColorHotFocus  = nctui::application::colorHotFocus;
+        containerColorNormal    = nctui::theme::current().colorError;
+        containerColorFocus     = nctui::theme::current().colorErrorFocus;
+        containerColorHotNormal = nctui::theme::current().colorHotNormal;
+        containerColorHotFocus  = nctui::theme::current().colorHotFocus;
     }
 
     void prepare() override { layoutButtons(); }
@@ -193,7 +195,7 @@ public:
 
         // Draw the title centred in the top border line.
         if (!title.empty()) {
-            p->set_channels(nctui::application::colorDialogNormal);
+            p->set_channels(nctui::theme::current().colorDialogNormal);
             std::string label = " " + title + " ";
             int tx = (width - static_cast<int>(label.length())) / 2;
             p->putstr(1, tx, label.c_str());

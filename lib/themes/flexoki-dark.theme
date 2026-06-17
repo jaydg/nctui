@@ -1,0 +1,43 @@
+# Flexoki Dark
+# Based on kepano/flexoki-neovim — Flexoki ink-on-paper colour scheme (dark variant)
+# https://github.com/kepano/flexoki-neovim
+#
+# Palette used:
+#   bg  (black)  #100F0F   ui  (900)   #282726   ui-2 (850)  #343331
+#   tx  (200)    #CECDC3
+#   bl  (blue)   #4385BE   cy  (cyan)  #3AA99F
+#   ye  (yellow) #D0A215   re  (red)   #D14D41   or  (orange) #DA702C
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — warm off-white on near-black ink
+normal            = CECDC3:100F0F
+# Focused widget — ink-black on Flexoki blue
+focus             = 100F0F:4385BE
+# Keyboard shortcut in unfocused widget — golden yellow on ink
+hot_normal        = D0A215:100F0F
+# Keyboard shortcut in focused widget — golden yellow on blue
+hot_focus         = D0A215:4385BE
+
+# Dialog background — off-white on ui (one step above main bg)
+dialog_normal     = CECDC3:282726
+# Focused widget inside a dialog — ink on teal-cyan
+dialog_focus      = 100F0F:3AA99F
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = D0A215:282726
+# Shortcut in focused dialog widget
+dialog_hot_focus  = D0A215:3AA99F
+
+# Menu bar — off-white on ui-2 (slightly lifted from dialog bg)
+menu              = CECDC3:343331
+# Shortcut in menu entry
+menu_hot          = D0A215:343331
+# Selected menu entry — ink on blue (mirrors focus)
+menu_selected     = 100F0F:4385BE
+# Shortcut in selected menu entry
+menu_hot_selected = D0A215:4385BE
+
+# Error dialog — off-white on Flexoki red
+error             = CECDC3:D14D41
+# Focused widget in error dialog — ink on orange
+error_focus       = 100F0F:DA702C

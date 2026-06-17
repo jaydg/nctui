@@ -1,0 +1,42 @@
+# Everforest Dark (Medium)
+# Based on sainnhe/everforest — "Comfortable & Pleasant Color Scheme"
+# https://github.com/sainnhe/everforest
+#
+# Palette used:
+#   bg0      #2d353b   bg1      #343f44   bg2      #3d484d
+#   fg       #d3c6aa   yellow   #dbbc7f   green    #a7c080
+#   aqua     #83c092   red      #e67e80   orange   #e69875
+#
+# Colors are RRGGBB:RRGGBB (foreground:background).
+
+# Application background — warm beige on dark green-grey
+normal            = d3c6aa:2d353b
+# Focused widget — dark text on green accent
+focus             = 2d353b:a7c080
+# Keyboard shortcut in unfocused widget — gold on dark bg
+hot_normal        = dbbc7f:2d353b
+# Keyboard shortcut in focused widget — gold on green
+hot_focus         = dbbc7f:a7c080
+
+# Dialog background — beige on a slightly lighter dark (bg2)
+dialog_normal     = d3c6aa:3d484d
+# Focused widget inside a dialog — dark on aqua
+dialog_focus      = 2d353b:83c092
+# Shortcut in unfocused dialog widget
+dialog_hot_normal = dbbc7f:3d484d
+# Shortcut in focused dialog widget
+dialog_hot_focus  = dbbc7f:83c092
+
+# Menu bar — beige on bg1
+menu              = d3c6aa:343f44
+# Shortcut in menu entry
+menu_hot          = dbbc7f:343f44
+# Selected menu entry — dark on green (mirrors focus)
+menu_selected     = 2d353b:a7c080
+# Shortcut in selected menu entry
+menu_hot_selected = dbbc7f:a7c080
+
+# Error dialog — beige on muted red
+error             = d3c6aa:e67e80
+# Focused widget in error dialog — dark on orange
+error_focus       = 2d353b:e69875
