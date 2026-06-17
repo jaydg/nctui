@@ -278,6 +278,10 @@ inline void end(std::shared_ptr<RunState> state) {
 /// RunState::dispose().
 inline void end(std::shared_ptr<Container> container) {
     std::erase(toplevels, container);
+    // Release any off-screen resources (e.g. Dialog's private plane) before
+    // the refresh so they are removed from the notcurses render tree and do
+    // not remain visible on screen after the container closes.
+    container->onRemoved();
     // Hide the hardware cursor: the closed container may have had a focused
     // Entry/TextView that enabled it. The newly-revealed top-level will
     // re-enable the cursor via positionCursor() if it has a text widget.

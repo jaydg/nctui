@@ -1,0 +1,54 @@
+= Widget Reference
+
+[[top]]
+Back to <<index.adoc#,index>>.
+
+== Container Widgets
+
+=== Frame
+
+A bordered container with an optional title embedded in the top border.
+Supports *resizable borders* — set `resizableH` or `resizableV` and connect
+neighbors with `setRightNeighbor()` / `setBottomNeighbor()`.
+
+=== Dialog
+
+A modal dialog container that inherits Frame and adds standard button
+placement.
+
+== Input Widgets
+
+[[entry]]
+=== Entry
+
+Single-line text input. Supports cut/copy/paste via the clipboard and
+word-motion keys (`Ctrl+Left` / `Ctrl+Right`).
+
+=== CheckBox
+
+A boolean toggle widget.  The hot-key character (e.g. `_F_ile`) can be set
+to provide keyboard shortcut access.
+
+=== ComboBox
+
+A drop-down selector showing a popup list when activated.
+
+== Display Widgets
+
+=== Label
+
+A non-focusable text widget.  Use `TrimLabel` for text that should be
+truncated to fit the available width.
+
+=== ProgressBar
+
+Renders a filled horizontal bar.  Useful for background task indicators.
+
+=== TextView
+
+A scrollable multi-line text area (read-only).
+
+== Navigation
+
+* Jump to <<entry,Entry widget>>
+* Back to <<index.adoc#,index>>

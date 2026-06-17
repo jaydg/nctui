@@ -106,6 +106,10 @@ public:
 
     void prepare() override { layoutButtons(); }
 
+    /// Destroys the dialog's private plane so it is removed from the
+    /// notcurses render tree before the post-close refresh() call.
+    void onRemoved() override { plane.reset(); }
+
     /// Adds a button to the dialog and triggers a layout pass.
     void addButton(std::shared_ptr<Button> b) {
         if (!b) return;

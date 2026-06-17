@@ -3,6 +3,7 @@
 //
 import nctui;
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include <string>
@@ -34,7 +35,21 @@ int main() {
                     "© Copyright 2018 Joachim de Groot");
             }),
             std::make_shared<nctui::MenuItem>("_Index", "", []() {
-                nctui::application::info("Help", "Nothing to see here.");
+                int dw = std::min(nctui::application::cols() - 4, 80);
+                int dh = std::min(nctui::application::lines() - 2, 28);
+
+                auto dlg = std::make_shared<nctui::Dialog>(dw, dh, "nctui Documentation");
+
+                auto browser = std::make_shared<nctui::DocBrowser>(
+                    0, 0, dw - 4, dh - 6, "docs");
+                browser->open("index.adoc");
+                dlg->add(browser);
+
+                auto btn = std::make_shared<nctui::Button>("Close");
+                btn->clicked = [dlg]() { dlg->running = false; };
+                dlg->addButton(btn);
+
+                nctui::application::run(dlg);
             })
         });
 

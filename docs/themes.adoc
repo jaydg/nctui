@@ -1,0 +1,115 @@
+= Themes
+
+[[top]]
+Back to <<index.adoc#,index>>.
+
+nctui uses a simple color-pair model for styling widgets.  A _theme_ is a
+set of named color pairs — each pair specifies a foreground and background
+color — that the widget toolkit maps to its various visual roles.
+
+== Color Pairs
+
+Each color pair is a foreground/background combination expressed as two
+six-digit hex RGB values separated by a colon: `RRGGBB:RRGGBB`.
+
+[cols="2,4"]
+|===
+
+| `normal` | Regular widgets (unfocused).
+| `focus` | Highlighted widget (has keyboard focus).
+| `hot_normal` | Hot-key character inside an unfocused widget.
+| `hot_focus` | Hot-key character inside a focused widget.
+| `dialog_normal` | Widgets inside a dialog box (unfocused).
+| `dialog_focus` | Focused widget inside a dialog box.
+| `dialog_hot_normal` | Hot-key character in an unfocused dialog widget.
+| `dialog_hot_focus` | Hot-key character in a focused dialog widget.
+| `menu` | Menu bar entry (unfocused).
+| `menu_hot` | Hot-key character in a menu entry.
+| `menu_selected` | Currently selected menu entry.
+| `menu_hot_selected` | Hot-key character in the selected menu entry.
+| `error` | Error dialog background.
+| `error_focus` | Focused widget inside an error dialog.
+
+|===
+
+The *DocBrowser* widget maps these roles to document elements:
+
+* Heading level 1 → *focus* foreground on *normal* background.
+* Heading level 2 → *hot_focus* foreground on *normal* background.
+* Heading level 3 → *hot_normal* foreground on *normal* background.
+* Inline code and `mono` spans → *hot_normal* foreground on *normal* background.
+* Hyperlinks → *hot_focus* foreground on *normal* background, underlined.
+* Focused link (Tab-selected) → full *focus* pair.
+
+== Built-in Default Theme
+
+The default theme uses the classic midnight-blue palette:
+
+----
+normal             = FFFFFF:0000AA   # white on blue
+focus              = 000000:00AAAA   # black on cyan
+hot_normal         = FFFF55:0000AA   # yellow on blue
+hot_focus          = FFFF55:00AAAA   # yellow on cyan
+
+dialog_normal      = 000000:FFFFFF   # black on white
+dialog_focus       = 000000:00AAAA   # black on cyan
+dialog_hot_normal  = 0000FF:FFFFFF   # blue on white
+dialog_hot_focus   = 0000FF:00AAAA   # blue on cyan
+
+menu               = FFFFFF:00AAAA   # white on cyan
+menu_hot           = FFFF55:00AAAA   # yellow on cyan
+menu_selected      = FFFFFF:000000   # white on black
+menu_hot_selected  = FFFF55:000000   # yellow on black
+
+error              = FFFFFF:AA0000   # white on red
+error_focus        = 000000:FFFFFF   # black on white
+----
+
+== Theme Files
+
+A theme file is a plain-text file of `key = RRGGBB:RRGGBB` lines.
+Lines beginning with `#` and blank lines are ignored.  Only the keys you
+want to override need to be present; all others keep their default values.
+
+Example — a dark grey theme:
+
+----
+normal            = DDDDDD:222222
+focus             = 000000:44AAFF
+hot_normal        = FFDD44:222222
+hot_focus         = FFDD44:44AAFF
+
+dialog_normal     = DDDDDD:333333
+dialog_focus      = 000000:44AAFF
+dialog_hot_normal = FFDD44:333333
+dialog_hot_focus  = FFDD44:44AAFF
+
+menu              = DDDDDD:334455
+menu_hot          = FFDD44:334455
+menu_selected     = DDDDDD:111111
+menu_hot_selected = FFDD44:111111
+
+error             = FFFFFF:AA2222
+error_focus       = 000000:DDDDDD
+----
+
+== Applying Themes in Code
+
+----
+// Load from file and apply
+auto t = nctui::theme::load("dark.theme");
+nctui::theme::apply(t);
+
+// Apply the built-in default
+nctui::theme::apply(nctui::theme::defaultTheme());
+----
+
+`theme::apply()` immediately refreshes all active containers — no manual
+redraw call is needed.  `theme::load()` throws `std::runtime_error` if the
+file cannot be opened or contains a syntax error; the message includes the
+filename and line number.
+
+== Navigation
+
+* Back to <<index.adoc#,index>>
+* <<widgets.adoc#,Widget Reference>>

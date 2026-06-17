@@ -85,6 +85,13 @@ public:
     /// Called once on the top-level container before the run loop starts.
     virtual void prepare() {}
 
+    /// Called by application::end() just before the final refresh().
+    ///
+    /// Override in subclasses that own off-screen resources (e.g. Dialog's
+    /// private ncpp::Plane) that must be released before the render pass so
+    /// they don't remain visible on screen after the container closes.
+    virtual void onRemoved() {}
+
     /// Refreshes containerColor* fields from the current theme and
     /// propagates recursively to all Container children.
     ///

@@ -1,0 +1,1089 @@
+//
+// Simple notcurses-based GUI toolkit, AsciiDoc browser widget
+//
+// Copyright (C) 2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+#include <sys/wait.h>
+#include <unistd.h>
+
+export module nctui:docbrowser;
+
+import :widget;
+import :container;
+import :globals;
+import :theme;
+import :keys;
+
+// -----------------------------------------------------------------------
+// Internal document model — not exported
+// -----------------------------------------------------------------------
+namespace {
+
+namespace fs = std::filesystem;
+
+// Color category for a text span.  Resolved to actual channels at draw
+// time so the widget picks up theme changes without re-parsing.
+enum class SpanColor : uint8_t {
+    Normal, Heading1, Heading2, Heading3, Code, Link, LinkFocus
+};
+
+struct Span {
+    std::string text;
+    SpanColor   color    = SpanColor::Normal;
+    uint32_t    styles   = 0;        // NCSTYLE_* flags
+    std::string link_ref;            // "" | "#anchor" | "file.adoc" | "file.adoc#anchor"
+};
+
+struct TableCell {
+    std::vector<Span> spans;
+};
+
+struct DocLine {
+    enum class Type { Blank, Normal, Heading1, Heading2, Heading3, Bullet,
+                      OrderedItem, Code, Rule, Table };
+    Type              type      = Type::Normal;
+    int               indent    = 0;
+    std::vector<Span> spans;
+    std::vector<std::vector<TableCell>> table_rows;
+    std::vector<int>                    col_props;
+};
+
+struct RenderedRow {
+    std::vector<Span> spans;
+    int               left_pad  = 0;
+    int               doc_line  = 0;
+    bool              is_code   = false;
+};
+
+struct LinkRegion {
+    int         row;
+    int         col;   // relative to widget left edge
+    int         len;
+    std::string ref;
+};
+
+struct ParsedDoc {
+    std::string                          title;
+    std::string                          base_dir;
+    std::vector<DocLine>                 lines;
+    std::unordered_map<std::string, int> anchors;  // anchor_id → line index
+};
+
+// -----------------------------------------------------------------------
+// Inline parser
+// -----------------------------------------------------------------------
+
+void parseInline(std::string_view text,
+                 SpanColor        base_color,
+                 uint32_t         base_styles,
+                 std::vector<Span>& out)
+{
+    while (!text.empty()) {
+        std::size_t best     = text.size();
+        int         best_tag = 0;  // 1=bold  2=italic  3=mono  4=xref  5=link
+
+        auto try_at = [&](std::size_t pos, int tag) {
+            if (pos < best) { best = pos; best_tag = tag; }
+        };
+
+        // *bold* — opening * must not be followed by a space
+        { auto p = text.find('*');
+          if (p != std::string_view::npos && p+1 < text.size() && text[p+1] != ' ')
+              try_at(p, 1); }
+        // _italic_
+        { auto p = text.find('_');
+          if (p != std::string_view::npos && p+1 < text.size() && text[p+1] != ' ')
+              try_at(p, 2); }
+        // `mono`
+        { auto p = text.find('`');
+          if (p != std::string_view::npos && p+1 < text.size())
+              try_at(p, 3); }
+        // <<xref>>
+        { auto p = text.find("<<");
+          if (p != std::string_view::npos)
+              try_at(p, 4); }
+        // link:
+        { auto p = text.find("link:");
+          if (p != std::string_view::npos)
+              try_at(p, 5); }
+        // https:// or http:// bare URL
+        { auto p = text.find("https://");
+          if (p == std::string_view::npos) p = text.find("http://");
+          else { auto q = text.find("http://"); p = std::min(p, q); }
+          if (p != std::string_view::npos)
+              try_at(p, 6); }
+
+        // Flush plain text before the earliest markup.
+        if (best > 0) {
+            out.push_back({std::string(text.substr(0, best)), base_color, base_styles, {}});
+            text = text.substr(best);
+        }
+        if (best_tag == 0) break;
+
+        switch (best_tag) {
+        case 1: { // *bold*
+            text = text.substr(1);
+            auto end = text.find('*');
+            if (end == std::string_view::npos) { out.push_back({"*", base_color, base_styles, {}}); }
+            else {
+                parseInline(text.substr(0, end), base_color, base_styles | NCSTYLE_BOLD, out);
+                text = text.substr(end + 1);
+            }
+            break; }
+        case 2: { // _italic_
+            text = text.substr(1);
+            auto end = text.find('_');
+            if (end == std::string_view::npos) { out.push_back({"_", base_color, base_styles, {}}); }
+            else {
+                parseInline(text.substr(0, end), base_color, base_styles | NCSTYLE_ITALIC, out);
+                text = text.substr(end + 1);
+            }
+            break; }
+        case 3: { // `mono`
+            text = text.substr(1);
+            auto end = text.find('`');
+            if (end == std::string_view::npos) { out.push_back({"`", base_color, base_styles, {}}); }
+            else {
+                parseInline(text.substr(0, end), SpanColor::Code, base_styles | NCSTYLE_BOLD, out);
+                text = text.substr(end + 1);
+            }
+            break; }
+        case 4: { // <<ref>> or <<ref,text>>
+            text = text.substr(2);
+            auto end = text.find(">>");
+            if (end == std::string_view::npos) { out.push_back({"<<", base_color, base_styles, {}}); }
+            else {
+                std::string inner(text.substr(0, end));
+                text = text.substr(end + 2);
+                auto comma = inner.find(',');
+                std::string ref   = comma == std::string::npos ? inner : inner.substr(0, comma);
+                std::string label = comma == std::string::npos ? ref   : inner.substr(comma + 1);
+                while (!label.empty() && label.front() == ' ') label.erase(label.begin());
+                if (label.empty()) label = ref;
+                // If ref contains '.' it's a file link; otherwise an anchor.
+                std::string link_ref = ref.find('.') != std::string::npos ? ref : "#" + ref;
+                out.push_back({label, SpanColor::Link, base_styles | NCSTYLE_UNDERLINE, link_ref});
+            }
+            break; }
+        case 5: { // link:url[text]
+            text = text.substr(5);
+            auto br = text.find('[');
+            if (br == std::string_view::npos) { out.push_back({"link:", base_color, base_styles, {}}); }
+            else {
+                std::string url(text.substr(0, br));
+                text = text.substr(br + 1);
+                auto cl = text.find(']');
+                std::string label = cl == std::string_view::npos
+                                    ? url : std::string(text.substr(0, cl));
+                if (cl != std::string_view::npos) text = text.substr(cl + 1);
+                if (label.empty()) label = url;
+                out.push_back({label, SpanColor::Link, base_styles | NCSTYLE_UNDERLINE, url});
+                // External URLs get an indicator symbol (↗ U+2197).
+                bool external = url.compare(0, 7, "http://") == 0 ||
+                                url.compare(0, 8, "https://") == 0;
+                if (external)
+                    out.push_back({"\xe2\x86\x97", SpanColor::Link, base_styles, {}});
+            }
+            break; }
+        case 6: { // https:// or http:// bare URL, optional [label]
+            auto end_url = text.find_first_of(" \t\n[");
+            std::string url = end_url == std::string_view::npos
+                              ? std::string(text) : std::string(text.substr(0, end_url));
+            text = text.substr(url.size());
+            std::string label;
+            if (!text.empty() && text[0] == '[') {
+                text = text.substr(1);
+                auto cl = text.find(']');
+                label = cl == std::string_view::npos
+                        ? std::string(text) : std::string(text.substr(0, cl));
+                if (cl != std::string_view::npos) text = text.substr(cl + 1);
+            }
+            if (label.empty()) label = url;
+            out.push_back({label, SpanColor::Link, base_styles | NCSTYLE_UNDERLINE, url});
+            // All bare https/http URLs are external; add the indicator symbol (↗ U+2197).
+            out.push_back({"\xe2\x86\x97", SpanColor::Link, base_styles, {}});
+            break; }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// AsciiDoc block parser
+// -----------------------------------------------------------------------
+
+ParsedDoc parseAsciiDoc(const std::string& path)
+{
+    ParsedDoc doc;
+    doc.base_dir = fs::path(path).parent_path().string();
+    if (doc.base_dir.empty()) doc.base_dir = ".";
+
+    std::ifstream f(path);
+    if (!f) {
+        doc.title = "Error";
+        DocLine err;
+        err.spans.push_back({"Cannot open: " + path, SpanColor::Heading2, NCSTYLE_BOLD, {}});
+        doc.lines.push_back(std::move(err));
+        return doc;
+    }
+
+    std::vector<std::string> raw;
+    { std::string line; while (std::getline(f, line)) raw.push_back(std::move(line)); }
+
+    bool in_code   = false;
+    bool in_table  = false;
+    DocLine cur_table;
+    std::vector<int> pending_cols;
+    int  ordered_n = 0;  // counter for current ordered-list run
+
+    for (int i = 0; i < (int)raw.size(); ++i) {
+        const std::string& s = raw[i];
+
+        // Code block delimiter
+        if (s == "----") { in_code = !in_code; continue; }
+
+        if (in_code) {
+            DocLine dl; dl.type = DocLine::Type::Code;
+            dl.spans.push_back({s, SpanColor::Code, NCSTYLE_BOLD, {}});
+            doc.lines.push_back(std::move(dl));
+            ordered_n = 0;
+            continue;
+        }
+
+        // Table delimiter |===
+        if (s == "|===") {
+            if (!in_table) {
+                in_table   = true;
+                cur_table  = DocLine{};
+                cur_table.type      = DocLine::Type::Table;
+                cur_table.col_props = pending_cols;
+                pending_cols.clear();
+            } else {
+                in_table = false;
+                if (!cur_table.table_rows.empty())
+                    doc.lines.push_back(std::move(cur_table));
+            }
+            continue;
+        }
+
+        if (in_table) {
+            if (s.empty()) continue;
+            if (s[0] == '|') {
+                std::vector<TableCell> row;
+                std::string_view sv(s.data() + 1, s.size() - 1);
+                while (!sv.empty()) {
+                    auto next = sv.find('|');
+                    std::string_view cell = next == std::string_view::npos
+                                           ? sv : sv.substr(0, next);
+                    while (!cell.empty() && cell.front() == ' ') cell = cell.substr(1);
+                    while (!cell.empty() && cell.back()  == ' ') cell = cell.substr(0, cell.size() - 1);
+                    TableCell tc;
+                    parseInline(cell, SpanColor::Normal, 0, tc.spans);
+                    row.push_back(std::move(tc));
+                    if (next == std::string_view::npos) break;
+                    sv = sv.substr(next + 1);
+                }
+                if (!row.empty())
+                    cur_table.table_rows.push_back(std::move(row));
+            }
+            continue;
+        }
+
+        if (s.empty()) {
+            DocLine dl; dl.type = DocLine::Type::Blank;
+            doc.lines.push_back(std::move(dl));
+            ordered_n = 0;
+            continue;
+        }
+
+        // Comments
+        if (s.size() >= 2 && s[0] == '/' && s[1] == '/') continue;
+
+        // Document attribute lines (:name: value)
+        if (s[0] == ':' && s.back() == ':') continue;
+
+        // Block attribute [...]: save [cols=...] for next table, skip all
+        if (s[0] == '[' && s.back() == ']' && (s.size() < 2 || s[1] != '[')) {
+            auto cp = s.find("cols=");
+            if (cp != std::string::npos) {
+                auto q0 = s.find_first_of("\"'", cp + 5);
+                if (q0 != std::string::npos) {
+                    auto q1 = s.find(s[q0], q0 + 1);
+                    if (q1 != std::string::npos) {
+                        std::string val = s.substr(q0 + 1, q1 - q0 - 1);
+                        pending_cols.clear();
+                        for (std::size_t pos = 0; pos < val.size(); ) {
+                            auto comma = val.find(',', pos);
+                            std::string tok = comma == std::string::npos
+                                              ? val.substr(pos) : val.substr(pos, comma - pos);
+                            std::size_t d = 0;
+                            while (d < tok.size() && tok[d] >= '0' && tok[d] <= '9') ++d;
+                            try { pending_cols.push_back(d ? std::stoi(tok.substr(0, d)) : 1); }
+                            catch (...) { pending_cols.push_back(1); }
+                            if (comma == std::string::npos) break;
+                            pos = comma + 1;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Horizontal rule
+        if (s == "'''" || s == "---" || s == "- - -") {
+            DocLine dl; dl.type = DocLine::Type::Rule;
+            doc.lines.push_back(std::move(dl));
+            ordered_n = 0;
+            continue;
+        }
+
+        // Anchor definition [[id]]
+        if (s.size() > 4 && s[0] == '[' && s[1] == '[') {
+            auto close = s.find("]]");
+            if (close != std::string::npos) {
+                std::string id = s.substr(2, close - 2);
+                doc.anchors[id] = static_cast<int>(doc.lines.size());
+                std::string rest = s.substr(close + 2);
+                while (!rest.empty() && rest.front() == ' ') rest.erase(rest.begin());
+                if (!rest.empty()) {
+                    DocLine dl;
+                    parseInline(rest, SpanColor::Normal, 0, dl.spans);
+                    doc.lines.push_back(std::move(dl));
+                }
+                continue;
+            }
+        }
+
+        // Headings: = H1  == H2  === H3
+        if (s[0] == '=') {
+            int lvl = 0;
+            while (lvl < (int)s.size() && s[lvl] == '=') ++lvl;
+            if (lvl < (int)s.size() && s[lvl] == ' ') {
+                std::string_view text(s.data() + lvl + 1, s.size() - lvl - 1);
+                DocLine dl;
+                SpanColor hc;
+                if (lvl == 1) {
+                    dl.type = DocLine::Type::Heading1; hc = SpanColor::Heading1;
+                    if (doc.title.empty()) doc.title = std::string(text);
+                } else if (lvl == 2) {
+                    dl.type = DocLine::Type::Heading2; hc = SpanColor::Heading2;
+                } else {
+                    dl.type = DocLine::Type::Heading3; hc = SpanColor::Heading3;
+                }
+                parseInline(text, hc, NCSTYLE_BOLD, dl.spans);
+                doc.lines.push_back(std::move(dl));
+                ordered_n = 0;
+                continue;
+            }
+        }
+
+        // Bullet list: * item or ** item (nested)
+        if (s.size() > 2 && s[0] == '*' && s[1] == ' ') {
+            DocLine dl; dl.type = DocLine::Type::Bullet; dl.indent = 2;
+            parseInline(std::string_view(s.data() + 2, s.size() - 2), SpanColor::Normal, 0, dl.spans);
+            doc.lines.push_back(std::move(dl));
+            ordered_n = 0;
+            continue;
+        }
+        if (s.size() > 3 && s[0] == '*' && s[1] == '*' && s[2] == ' ') {
+            DocLine dl; dl.type = DocLine::Type::Bullet; dl.indent = 4;
+            parseInline(std::string_view(s.data() + 3, s.size() - 3), SpanColor::Normal, 0, dl.spans);
+            doc.lines.push_back(std::move(dl));
+            ordered_n = 0;
+            continue;
+        }
+
+        // Ordered list: . item
+        if (s.size() > 2 && s[0] == '.' && s[1] == ' ') {
+            ++ordered_n;
+            std::string pfx = std::to_string(ordered_n) + ". ";
+            DocLine dl; dl.type = DocLine::Type::OrderedItem; dl.indent = 3;
+            dl.spans.push_back({pfx, SpanColor::Normal, NCSTYLE_BOLD, {}});
+            parseInline(std::string_view(s.data() + 2, s.size() - 2), SpanColor::Normal, 0, dl.spans);
+            doc.lines.push_back(std::move(dl));
+            continue;
+        }
+
+        // Normal paragraph text
+        {
+            DocLine dl; dl.type = DocLine::Type::Normal;
+            parseInline(s, SpanColor::Normal, 0, dl.spans);
+            doc.lines.push_back(std::move(dl));
+            ordered_n = 0;
+        }
+    }
+
+    if (doc.title.empty()) doc.title = fs::path(path).filename().string();
+    return doc;
+}
+
+// -----------------------------------------------------------------------
+// Word-wrapper: DocLine → RenderedRow
+// -----------------------------------------------------------------------
+
+// Clips a UTF-8 string to at most `cols` display columns (code points).
+static std::string clipToColumns(const std::string& s, int cols) {
+    int  n = 0;
+    std::size_t i = 0;
+    while (i < s.size() && n < cols) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        std::size_t step;
+        if      (c < 0x80)           step = 1;
+        else if ((c & 0xE0) == 0xC0) step = 2;
+        else if ((c & 0xF0) == 0xE0) step = 3;
+        else                          step = 4;
+        if (i + step > s.size()) break;
+        i += step;
+        ++n;
+    }
+
+    return s.substr(0, i);
+}
+
+// Returns the display width of a UTF-8 string, counting Unicode code points
+// (each treated as one column).  This is correct for all narrow characters
+// (BMP, non-CJK) and avoids the byte-count overcounting that breaks cursor
+// positioning for multi-byte glyphs such as • (U+2022, 3 UTF-8 bytes but
+// 1 display column).
+static int strCols(const std::string& s) {
+    int n = 0;
+    for (size_t i = 0; i < s.size(); ) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        if      (c < 0x80)           i += 1;
+        else if ((c & 0xE0) == 0xC0) i += 2;
+        else if ((c & 0xF0) == 0xE0) i += 3;
+        else                          i += 4;
+        ++n;
+    }
+    return n;
+}
+
+void wrapLine(const DocLine& dl, int width, int doc_line_idx,
+              std::vector<RenderedRow>& rows,
+              std::vector<LinkRegion>&  links)
+{
+    using Type = DocLine::Type;
+
+    if (dl.type == Type::Blank) {
+        rows.push_back({{}, 0, doc_line_idx});
+        return;
+    }
+
+    if (dl.type == Type::Rule) {
+        RenderedRow r;
+        r.doc_line = doc_line_idx;
+        r.spans.push_back({std::string(width, '-'), SpanColor::Normal, 0, {}});
+        rows.push_back(std::move(r));
+        return;
+    }
+
+    if (dl.type == Type::Code) {
+        RenderedRow r; r.doc_line = doc_line_idx; r.left_pad = 2; r.is_code = true;
+        int avail = width - 2;
+        for (const auto& sp : dl.spans) {
+            std::string t = sp.text;
+            if ((int)t.size() > avail) t.resize(avail);
+            r.spans.push_back({t, sp.color, sp.styles, {}});
+        }
+        rows.push_back(std::move(r));
+        return;
+    }
+
+    if (dl.type == Type::Table) {
+        if (dl.table_rows.empty()) return;
+
+        int ncols = 0;
+        for (const auto& row : dl.table_rows)
+            ncols = std::max(ncols, static_cast<int>(row.size()));
+        if (ncols == 0) return;
+
+        // content_avail = width minus column separator bars and per-cell padding (1 space each side)
+        int content_avail = width - (ncols + 1) - (ncols * 2);
+        if (content_avail < ncols) content_avail = ncols;
+
+        // Distribute proportionally from col_props; default to equal widths
+        std::vector<int> col_w(ncols, 1);
+        int total_prop = 0;
+        for (int c = 0; c < ncols; c++)
+            total_prop += (c < (int)dl.col_props.size() ? dl.col_props[c] : 1);
+
+        int assigned = 0;
+        for (int c = 0; c < ncols - 1; c++) {
+            int p  = c < (int)dl.col_props.size() ? dl.col_props[c] : 1;
+            col_w[c] = std::max(1, content_avail * p / total_prop);
+            assigned += col_w[c];
+        }
+        col_w[ncols - 1] = std::max(1, content_avail - assigned);
+
+        // UTF-8 box-drawing characters
+        static const char* H  = "\xe2\x94\x80";  // ─
+        static const char* V  = "\xe2\x94\x82";  // │
+        static const char* TL = "\xe2\x94\x8c";  // ┌
+        static const char* TR = "\xe2\x94\x90";  // ┐
+        static const char* BL = "\xe2\x94\x94";  // └
+        static const char* BR = "\xe2\x94\x98";  // ┘
+        static const char* LT = "\xe2\x94\x9c";  // ├
+        static const char* RT = "\xe2\x94\xa4";  // ┤
+        static const char* TT = "\xe2\x94\xac";  // ┬
+        static const char* BT = "\xe2\x94\xb4";  // ┴
+        static const char* CR = "\xe2\x94\xbc";  // ┼
+
+        auto push_border = [&](const char* left, const char* mid, const char* right) {
+            std::string line = left;
+            for (int c = 0; c < ncols; c++) {
+                for (int j = 0; j < col_w[c] + 2; j++) line += H;
+                line += (c < ncols - 1) ? mid : right;
+            }
+            RenderedRow r; r.doc_line = doc_line_idx;
+            r.spans.push_back({line, SpanColor::Normal, 0, {}});
+            rows.push_back(std::move(r));
+        };
+
+        push_border(TL, TT, TR);
+
+        for (int ri = 0; ri < (int)dl.table_rows.size(); ri++) {
+            const auto& row = dl.table_rows[ri];
+
+            RenderedRow r; r.doc_line = doc_line_idx;
+            int row_idx = static_cast<int>(rows.size());
+            int cur_col = 0;
+
+            r.spans.push_back({V, SpanColor::Normal, 0, {}});
+            cur_col += 1;
+
+            for (int ci = 0; ci < ncols; ci++) {
+                r.spans.push_back({" ", SpanColor::Normal, 0, {}});
+                cur_col += 1;
+
+                int remaining = col_w[ci];
+                if (ci < (int)row.size()) {
+                    for (const auto& sp : row[ci].spans) {
+                        if (remaining <= 0) break;
+                        std::string t = clipToColumns(sp.text, remaining);
+                        int tw = strCols(t);
+                        if (tw == 0) continue;
+                        if (!sp.link_ref.empty())
+                            links.push_back({row_idx, cur_col, tw, sp.link_ref});
+                        r.spans.push_back({t, sp.color, sp.styles, sp.link_ref});
+                        cur_col  += tw;
+                        remaining -= tw;
+                    }
+                }
+
+                if (remaining > 0) {
+                    r.spans.push_back({std::string(remaining, ' '), SpanColor::Normal, 0, {}});
+                    cur_col += remaining;
+                }
+
+                r.spans.push_back({" ", SpanColor::Normal, 0, {}});
+                cur_col += 1;
+                r.spans.push_back({V, SpanColor::Normal, 0, {}});
+                cur_col += 1;
+            }
+
+            rows.push_back(std::move(r));
+
+            if (ri < (int)dl.table_rows.size() - 1)
+                push_border(LT, CR, RT);
+        }
+
+        push_border(BL, BT, BR);
+        return;
+    }
+
+    // Headings: single row, no wrap.
+    // Collapse any trailing blank rows from the source into exactly one blank
+    // above the heading (skip that blank if the heading is the first content).
+    // No blank row below — content follows immediately.
+    if (dl.type == Type::Heading1 || dl.type == Type::Heading2 || dl.type == Type::Heading3) {
+        if (!rows.empty()) {
+            while (!rows.empty() && rows.back().spans.empty())
+                rows.pop_back();
+            rows.push_back({{}, 0, doc_line_idx});
+        }
+        RenderedRow r; r.doc_line = doc_line_idx;
+        std::string full;
+        uint32_t hst = NCSTYLE_BOLD;
+        SpanColor hc = dl.type == Type::Heading1 ? SpanColor::Heading1 :
+                       dl.type == Type::Heading2 ? SpanColor::Heading2 : SpanColor::Heading3;
+        if (dl.type == Type::Heading1) hst |= NCSTYLE_UNDERLINE;
+        if (dl.type == Type::Heading2) hst |= NCSTYLE_ITALIC;
+        for (auto& sp : dl.spans) full += sp.text;
+        if ((int)full.size() > width) full.resize(width);
+        r.spans.push_back({full, hc, hst, {}});
+        rows.push_back(std::move(r));
+        return;
+    }
+
+    // Bullet prefix for the first row
+    std::string bullet_pfx;
+    int cont_pad = dl.indent;
+    int first_pad = dl.indent;
+
+    if (dl.type == Type::Bullet) {
+        bullet_pfx = "\xe2\x80\xa2 ";  // • (U+2022 in UTF-8) + space
+        first_pad  = dl.indent - 1;  // 1 space before * at level 1, 3 at level 2
+        cont_pad   = dl.indent + 1;  // aligns with text: 3 at level 1
+    }
+
+    int avail = width - first_pad;
+    if (avail < 4) avail = 4;
+
+    // Current row being built
+    RenderedRow cur; cur.doc_line = doc_line_idx; cur.left_pad = first_pad;
+    int col = 0;
+    bool first_row = true;
+
+    // Emit bullet prefix onto the first row
+    if (!bullet_pfx.empty()) {
+        cur.spans.push_back({bullet_pfx, SpanColor::Normal, NCSTYLE_BOLD, {}});
+        col += strCols(bullet_pfx);
+    }
+
+    auto commit_row = [&]() {
+        // Record link regions before pushing the row
+        int row_idx = static_cast<int>(rows.size());
+        int sc = cur.left_pad;
+        for (auto& sp : cur.spans) {
+            if (!sp.link_ref.empty())
+                links.push_back({row_idx, sc, strCols(sp.text), sp.link_ref});
+            sc += strCols(sp.text);
+        }
+        rows.push_back(std::move(cur));
+        cur = RenderedRow(); cur.doc_line = doc_line_idx; cur.left_pad = cont_pad;
+        avail = width - cont_pad;
+        if (avail < 4) avail = 4;
+        col = 0;
+        first_row = false;
+    };
+
+    for (const auto& span : dl.spans) {
+        if (span.text.empty()) continue;
+        std::string_view sv = span.text;
+
+        while (!sv.empty()) {
+            // Find next word boundary
+            auto sp_pos = sv.find(' ');
+            std::string_view word = sp_pos == std::string_view::npos ? sv : sv.substr(0, sp_pos);
+
+            if (!word.empty()) {
+                int wlen = static_cast<int>(word.size());
+                if (col > 0 && col + wlen > avail)
+                    commit_row();
+
+                // Merge with last span if same style, otherwise push new
+                if (!cur.spans.empty() &&
+                    cur.spans.back().color    == span.color &&
+                    cur.spans.back().styles   == span.styles &&
+                    cur.spans.back().link_ref == span.link_ref)
+                {
+                    cur.spans.back().text += std::string(word);
+                } else {
+                    cur.spans.push_back({std::string(word), span.color, span.styles, span.link_ref});
+                }
+                col += wlen;
+            }
+
+            if (sp_pos == std::string_view::npos) break;
+            sv = sv.substr(sp_pos + 1);
+
+            // Append the space to the last span if room.
+            // If the last span is a link/underlined span that belongs to a
+            // *different* inline run than the current span (the space is the
+            // gap between the link and the following plain text), push a plain
+            // space so the underline doesn't bleed into the gap.  When the
+            // space is *within* the same link span, the conditions match and
+            // we merge normally.
+            if (col > 0 && col < avail) {
+                if (!cur.spans.empty()) {
+                    auto& last = cur.spans.back();
+                    bool last_is_decorated = !last.link_ref.empty() ||
+                                            (last.styles & NCSTYLE_UNDERLINE);
+                    bool same_run = last.link_ref == span.link_ref &&
+                                    last.styles   == span.styles;
+                    if (last_is_decorated && !same_run)
+                        cur.spans.push_back({" ", SpanColor::Normal, 0, {}});
+                    else
+                        last.text += ' ';
+                }
+                col++;
+            }
+        }
+    }
+
+    if (!cur.spans.empty()) {
+        int row_idx = static_cast<int>(rows.size());
+        int sc = cur.left_pad;
+        for (auto& sp : cur.spans) {
+            if (!sp.link_ref.empty())
+                links.push_back({row_idx, sc, strCols(sp.text), sp.link_ref});
+            sc += strCols(sp.text);
+        }
+        rows.push_back(std::move(cur));
+    }
+}
+
+void layoutDoc(const ParsedDoc& doc, int width,
+               std::vector<RenderedRow>& rows,
+               std::vector<LinkRegion>&  links)
+{
+    rows.clear(); links.clear();
+    for (int i = 0; i < (int)doc.lines.size(); ++i)
+        wrapLine(doc.lines[i], width, i, rows, links);
+}
+
+} // anonymous namespace
+
+// -----------------------------------------------------------------------
+// Exported DocBrowser widget
+// -----------------------------------------------------------------------
+export namespace nctui {
+
+/// A scrollable AsciiDoc browser widget.
+///
+/// Parses a minimal subset of AsciiDoc and displays it with terminal
+/// attributes (bold, italic, underline) and link navigation.  Cross-
+/// references (<<ref>>) and link: macros open other .adoc files from the
+/// same documentation directory or jump to named anchors ([[id]]).
+///
+/// Keyboard: Up/Down/PgUp/PgDn scroll, Tab/Shift+Tab cycle links,
+/// Enter follows the focused link, Backspace navigates back.
+/// Mouse: wheel scrolls, left-click follows links.
+class DocBrowser : public Widget {
+private:
+    std::string                  _docs_dir;
+    std::unique_ptr<ParsedDoc>   _doc;
+    std::vector<RenderedRow>     _rows;
+    std::vector<LinkRegion>      _links;
+    int                          _scroll_top   = 0;
+    int                          _focused_link = -1;
+
+    struct HistEntry { std::string path; std::string anchor; int scroll; };
+    std::vector<HistEntry> _history;
+    int                    _hist_pos = -1;
+
+    // ----------------------------------------------------------------
+    // Color resolution
+    // ----------------------------------------------------------------
+
+    uint64_t _resolveColor(SpanColor sc) const {
+        uint64_t norm = colorNormal();
+        uint64_t foc  = colorFocus();
+        uint64_t hotn = colorHotNormal();
+        uint64_t hotf = colorHotFocus();
+
+        // "fg from fg_src on bg from norm" — graceful fallback when no theme
+        auto fg_on_norm = [&](uint64_t fg_src) -> uint64_t {
+            if (ncchannels_fg_default_p(fg_src)) return norm;
+            uint64_t ch = norm;
+            ncchannels_set_fg_rgb(&ch, ncchannels_fg_rgb(fg_src));
+            return ch;
+        };
+
+        switch (sc) {
+        case SpanColor::Heading1:  return fg_on_norm(foc);
+        case SpanColor::Heading2:  return fg_on_norm(hotf);
+        case SpanColor::Heading3:  return fg_on_norm(hotn);
+        case SpanColor::Code:      return fg_on_norm(hotn);
+        case SpanColor::Link:      return fg_on_norm(hotf);
+        case SpanColor::LinkFocus: return foc;
+        default:                   return norm;
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Layout & scroll helpers
+    // ----------------------------------------------------------------
+
+    void _layout() {
+        // Preserve the doc_line visible at the top after re-wrap
+        int top_doc_line = (!_rows.empty() && _scroll_top < (int)_rows.size())
+                           ? _rows[_scroll_top].doc_line : 0;
+
+        _rows.clear(); _links.clear(); _focused_link = -1;
+        if (!_doc || width < 4) return;
+
+        layoutDoc(*_doc, width, _rows, _links);
+
+        _scroll_top = 0;
+        for (int i = 0; i < (int)_rows.size(); ++i) {
+            if (_rows[i].doc_line >= top_doc_line) { _scroll_top = i; break; }
+        }
+        _scroll_top = std::clamp(_scroll_top, 0, std::max(0, (int)_rows.size() - height));
+    }
+
+    void _scrollToDocLine(int dl_idx) {
+        for (int i = 0; i < (int)_rows.size(); ++i) {
+            if (_rows[i].doc_line >= dl_idx) { _scroll_top = i; return; }
+        }
+    }
+
+    void _scroll(int delta) {
+        _scroll_top = std::clamp(_scroll_top + delta,
+                                 0,
+                                 std::max(0, (int)_rows.size() - height));
+    }
+
+    void _nextLink(int dir) {
+        if (_links.empty()) return;
+        if (_focused_link < 0) {
+            // Start from the first link at or below the current scroll
+            for (int i = 0; i < (int)_links.size(); ++i)
+                if (_links[i].row >= _scroll_top) { _focused_link = i; goto done; }
+            _focused_link = 0;
+        } else {
+            _focused_link = (_focused_link + dir + (int)_links.size()) % (int)_links.size();
+        }
+        done:
+        // Scroll the focused link into view
+        int lrow = _links[_focused_link].row;
+        if (lrow < _scroll_top)
+            _scroll_top = lrow;
+        else if (lrow >= _scroll_top + height)
+            _scroll_top = lrow - height + 1;
+    }
+
+    // ----------------------------------------------------------------
+    // Navigation
+    // ----------------------------------------------------------------
+
+    bool _openFile(const std::string& path, const std::string& anchor) {
+        // Truncate forward history, push new entry
+        if (_hist_pos + 1 < (int)_history.size())
+            _history.erase(_history.begin() + _hist_pos + 1, _history.end());
+        // Save current scroll into current history entry
+        if (_hist_pos >= 0 && _hist_pos < (int)_history.size())
+            _history[_hist_pos].scroll = _scroll_top;
+
+        _history.push_back({path, anchor, 0});
+        _hist_pos = (int)_history.size() - 1;
+
+        _doc = std::make_unique<ParsedDoc>(parseAsciiDoc(path));
+        _scroll_top = 0;
+        _layout();
+
+        if (!anchor.empty()) {
+            auto it = _doc->anchors.find(anchor);
+            if (it != _doc->anchors.end()) _scrollToDocLine(it->second);
+        }
+        return true;
+    }
+
+    bool _followLink(const std::string& ref) {
+        if (ref.empty()) return false;
+
+        // External URL: open in the system browser via xdg-open.
+        // Double-fork so the grandchild is adopted by init and never becomes
+        // a zombie; the first child exits immediately so we can waitpid() it
+        // without blocking.
+        if (ref.size() >= 7 &&
+            (ref.compare(0, 7, "http://") == 0 ||
+             ref.compare(0, 8, "https://") == 0))
+        {
+            ::pid_t pid = ::fork();
+            if (pid == 0) {
+                if (::fork() == 0) {
+                    ::execlp("xdg-open", "xdg-open", ref.c_str(), nullptr);
+                    ::_exit(1);
+                }
+                ::_exit(0);
+            }
+            if (pid > 0) ::waitpid(pid, nullptr, 0);
+            return true;
+        }
+
+        if (ref[0] == '#') {
+            // Internal anchor jump
+            if (!_doc) return false;
+            auto it = _doc->anchors.find(ref.substr(1));
+            if (it == _doc->anchors.end()) return false;
+            _scrollToDocLine(it->second);
+            return true;
+        }
+
+        // File link (possibly with anchor)
+        auto hash     = ref.find('#');
+        std::string file   = hash == std::string::npos ? ref : ref.substr(0, hash);
+        std::string anchor = hash == std::string::npos ? ""  : ref.substr(hash + 1);
+
+        // Resolve relative to current doc's directory
+        std::string base = _doc ? _doc->base_dir : _docs_dir;
+        std::string full = (fs::path(base) / file).string();
+        return _openFile(full, anchor);
+    }
+
+public:
+    explicit DocBrowser(int x, int y, int w, int h,
+                        const std::string& docs_dir = ".")
+        : Widget(x, y, w, h), _docs_dir(docs_dir)
+    {
+        canFocus(true);
+    }
+
+    /// Opens a file (relative to docs_dir or absolute).
+    bool open(const std::string& filename) {
+        std::string path = fs::path(filename).is_absolute()
+                           ? filename
+                           : (fs::path(_docs_dir) / filename).string();
+        return _openFile(path, "");
+    }
+
+    /// Navigates back in history.
+    void goBack() {
+        if (_hist_pos <= 0) return;
+        if (_hist_pos < (int)_history.size())
+            _history[_hist_pos].scroll = _scroll_top;
+        --_hist_pos;
+        const auto& e = _history[_hist_pos];
+        _doc = std::make_unique<ParsedDoc>(parseAsciiDoc(e.path));
+        _scroll_top = 0;
+        _layout();
+        _scroll_top = std::clamp(e.scroll, 0, std::max(0, (int)_rows.size() - height));
+    }
+
+    /// Returns the title of the currently loaded document.
+    std::string title() const { return _doc ? _doc->title : ""; }
+
+    // ----------------------------------------------------------------
+    // Widget interface
+    // ----------------------------------------------------------------
+
+    void doSizeChanged() override { _layout(); }
+
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (plane) plane->cursor_move(y, x);
+    }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        for (int row_off = 0; row_off < height; ++row_off) {
+            int row_idx  = _scroll_top + row_off;
+            int screen_y = y + row_off;
+
+            // Clear the whole row. Code block rows use colorMenu as background.
+            if (row_idx >= 0 && row_idx < (int)_rows.size() && _rows[row_idx].is_code)
+                plane->set_channels(nctui::theme::current().colorMenu);
+            else
+                plane->set_channels(_resolveColor(SpanColor::Normal));
+            plane->styles_set(ncpp::CellStyle::None);
+            std::string blank(width, ' ');
+            plane->putstr(screen_y, x, blank.c_str());
+
+            if (row_idx < 0 || row_idx >= (int)_rows.size()) continue;
+            const auto& row = _rows[row_idx];
+
+            int screen_x = x + row.left_pad;
+
+            for (const auto& span : row.spans) {
+                if (screen_x >= x + width) break;
+                if (span.text.empty()) continue;
+
+                // Is this span the focused link?
+                bool is_focused = false;
+                if (_focused_link >= 0 && !span.link_ref.empty()) {
+                    const auto& fl = _links[_focused_link];
+                    int rel = screen_x - x;
+                    if (fl.row == row_idx && fl.ref == span.link_ref &&
+                        rel >= fl.col && rel < fl.col + fl.len)
+                        is_focused = true;
+                }
+
+                // Code block rows: use colorMenuHot for text so it stands out
+                // against the colorMenu background.
+                uint64_t ch;
+                if (row.is_code && !is_focused) {
+                    uint64_t menu = nctui::theme::current().colorMenu;
+                    uint64_t hot  = nctui::theme::current().colorMenuHot;
+                    // hot foreground on menu background
+                    ch = menu;
+                    ncchannels_set_fg_rgb(&ch, ncchannels_fg_rgb(hot));
+                } else {
+                    SpanColor sc = is_focused ? SpanColor::LinkFocus : span.color;
+                    ch = _resolveColor(sc);
+                }
+                plane->set_channels(ch);
+                plane->styles_set(static_cast<ncpp::CellStyle>(span.styles));
+
+                // Clip the text at the right edge (column-aware: resize by
+                // display columns, not bytes, so multi-byte glyphs aren't split).
+                int avail = x + width - screen_x;
+                std::string text = span.text;
+                if (strCols(text) > avail) text = clipToColumns(text, avail);
+                plane->putstr(screen_y, screen_x, text.c_str());
+                screen_x += strCols(text);
+            }
+        }
+
+        plane->styles_set(ncpp::CellStyle::None);
+        positionCursor();
+    }
+
+    bool processKey(char32_t key) override {
+        switch (key) {
+        case NCKEY_UP:        _scroll(-1);            redraw(); return true;
+        case NCKEY_DOWN:      _scroll(1);             redraw(); return true;
+        case NCKEY_PGUP:      _scroll(-(height - 1)); redraw(); return true;
+        case NCKEY_PGDOWN:    _scroll(height - 1);    redraw(); return true;
+        case NCKEY_HOME:      _scroll_top = 0;        redraw(); return true;
+        case NCKEY_END:
+            _scroll_top = std::max(0, (int)_rows.size() - height);
+            redraw(); return true;
+        case '\t':                _nextLink(+1); redraw(); return true;
+        case static_cast<char32_t>(Keys::ShiftTab): _nextLink(-1); redraw(); return true;
+        case NCKEY_ENTER:
+            if (_focused_link >= 0 && _focused_link < (int)_links.size())
+                _followLink(_links[_focused_link].ref);
+            redraw(); return true;
+        case NCKEY_BACKSPACE:
+            goBack(); redraw(); return true;
+        default:
+            return false;
+        }
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev) return;
+
+        if (ev->id == NCKEY_BUTTON4) { _scroll(-3); redraw(); return; }
+        if (ev->id == NCKEY_BUTTON5) { _scroll(3);  redraw(); return; }
+
+        if (ev->evtype != NCTYPE_RELEASE && ev->evtype != NCTYPE_UNKNOWN) return;
+
+        int rel_y = ev->y - y;
+        int rel_x = ev->x - x;
+        if (rel_y < 0 || rel_y >= height || rel_x < 0 || rel_x >= width) return;
+
+        // Set widget focus
+        if (container) container->set_focused(shared_from_this());
+
+        int row_idx = _scroll_top + rel_y;
+        for (int i = 0; i < (int)_links.size(); ++i) {
+            const auto& lr = _links[i];
+            if (lr.row == row_idx && rel_x >= lr.col && rel_x < lr.col + lr.len) {
+                _focused_link = i;
+                _followLink(lr.ref);
+                redraw();
+                return;
+            }
+        }
+    }
+};
+
+} // export namespace nctui

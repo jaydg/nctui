@@ -33,3 +33,4 @@ export import :listview;
 export import :combobox;
 export import :menubar;
 export import :radiogroup;
+export import :docbrowser;

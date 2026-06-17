@@ -23,6 +23,7 @@ It is a C++20 port of a Terminal UI framework originally created for the Mono pr
 | `Button`      | Clickable button with customizable text   |
 | `Label`       | Static text display                       |
 | `TrimLabel`   | Label with automatic text trimming        |
+| `Docbrowser`  | AsciiDoc document browser                 |
 | `Checkbox`    | Toggleable checkbox                       |
 | `Entry`       | Single-line text input                    |
 | `Combobox`    | Multi-select that shows selection         |

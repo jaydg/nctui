@@ -1,0 +1,34 @@
+= nctui Documentation
+
+Welcome to *nctui*, a lightweight TUI widget toolkit built on top of
+https://notcurses.com[notcurses].
+
+== Getting Started
+
+Add `ctui` as a dependency, call `application::init()`, build a container
+hierarchy, and pass it to `application::run()`.
+
+----
+#include <ctui>
+
+int main() {
+    nctui::application::init();
+    auto top = std::make_shared<nctui::Container>(0, 0,
+        nctui::application::cols(), nctui::application::lines());
+    // … add widgets …
+    nctui::application::run(top);
+}
+----
+
+See <<widgets.adoc,Widget Reference>> for a full list of available widgets.
+
+== Navigation
+
+* Use *Tab* / *Shift+Tab* to cycle through links.
+* Press *Enter* to follow a link.
+* Press *Backspace* to go back.
+
+== Sections
+
+* <<widgets.adoc,Widgets>>
+* <<themes.adoc,Themes>>
