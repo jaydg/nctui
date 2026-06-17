@@ -1,0 +1,405 @@
+//
+// Simple notcurses-based GUI toolkit, combo box widget
+//
+// Copyright (C) 2026 Joachim de Groot
+//
+// MIT License — see project root for full text.
+//
+module;
+
+#include <ncpp/NotCurses.hh>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+export module nctui:combobox;
+
+import :widget;
+import :container;
+import :globals;
+import :keys;
+import :listview;
+import :application;
+import :theme;
+
+// -----------------------------------------------------------------------
+// ComboBoxPopup — non-exported modal drop-down overlay
+//
+// Uses a dedicated ncpp::Plane created on top of all existing planes
+// (including any Dialog plane) so the dropdown is always fully visible.
+// Coordinate handling mirrors Dialog: redraw() uses local (0,0)-based
+// coordinates on the private plane and temporarily swaps std_plane so
+// child widgets draw on the same plane.
+// -----------------------------------------------------------------------
+namespace nctui {
+
+class ComboBoxPopup : public Container {
+private:
+    std::shared_ptr<ListView>    list;
+    std::unique_ptr<ncpp::Plane> _plane;
+    bool _confirmed = false;
+    int  _chosen    = -1;
+
+public:
+    ComboBoxPopup(int px, int py, int pw, int ph,
+                  std::shared_ptr<IListProvider> provider,
+                  int initial_selected)
+        : Container(px, py, pw, ph)
+    {
+        border    = 1;
+        colorRole = ColorRole::Dialog;
+        containerColorNormal    = nctui::theme::current().colorDialogNormal;
+        containerColorFocus     = nctui::theme::current().colorDialogFocus;
+        containerColorHotNormal = nctui::theme::current().colorDialogHotNormal;
+        containerColorHotFocus  = nctui::theme::current().colorDialogHotFocus;
+
+        // Create a new plane above all existing planes (including any Dialog
+        // plane).  Parent is the real std_plane; y/x are absolute screen coords.
+        try {
+            _plane = std::make_unique<ncpp::Plane>(
+                *nctui::application::std_plane, ph, pw, py, px);
+        } catch (const std::exception& e) {
+            std::cerr << "nctui: failed to create popup plane: " << e.what() << '\n';
+            exit(1);
+        }
+
+        int list_w = pw - border * 2;
+        int list_h = ph - border * 2;
+        list = std::make_shared<ListView>(0, 0, list_w, list_h, provider);
+
+        if (initial_selected >= 0 &&
+            initial_selected < static_cast<int>(provider->length()))
+        {
+            list->selected(initial_selected);
+        }
+
+        add(list);
+    }
+
+    bool confirmed()   const { return _confirmed; }
+    int  chosenIndex() const { return _chosen; }
+
+    void redraw() override {
+        ncpp::Plane* p = _plane.get();
+        if (!p) return;
+
+        p->set_channels(containerColorNormal);
+
+        // Fill and frame using local (0,0)-based coordinates on our plane.
+        for (int row = 0; row < height; ++row) {
+            std::string blank(width, ' ');
+            p->putstr(row, 0, blank.c_str());
+        }
+
+        if (width >= 2 && height >= 2) {
+            p->putstr(0,          0,          "┌");
+            p->putstr(0,          width - 1,  "┐");
+            p->putstr(height - 1, 0,          "└");
+            p->putstr(height - 1, width - 1,  "┘");
+
+            for (int c = 1; c < width - 1; ++c) {
+                p->putstr(0,          c, "─");
+                p->putstr(height - 1, c, "─");
+            }
+
+            for (int r = 1; r < height - 1; ++r) {
+                p->putstr(r, 0,         "│");
+                p->putstr(r, width - 1, "│");
+            }
+        }
+
+        // Mirror Dialog: redirect std_plane to our plane and zero out our
+        // absolute position so that redrawChildren computes child offsets in
+        // local plane coordinates rather than screen coordinates.
+        ncpp::Plane* saved_std = nctui::application::std_plane;
+        int saved_x = this->x, saved_y = this->y;
+        nctui::application::std_plane = p;
+        this->x = 0;
+        this->y = 0;
+        redrawChildren(p);
+        this->x = saved_x;
+        this->y = saved_y;
+        nctui::application::std_plane = saved_std;
+        Container::positionCursor();
+    }
+
+    bool processKey(char32_t key) override {
+        if (key == NCKEY_ENTER) {
+            _confirmed = true;
+            _chosen    = list ? list->selected() : -1;
+            running    = false;
+
+            return true;
+        }
+
+        if (key == static_cast<char32_t>(Keys::Esc)) {
+            running = false;
+
+            return true;
+        }
+
+        return Container::processKey(key);
+    }
+
+    /// Handles mouse events for the popup.
+    ///
+    /// A press inside the popup is forwarded to the container so the ListView
+    /// can highlight the hovered row before the release arrives.  A release
+    /// inside the popup confirms the current selection and closes.  A release
+    /// outside the popup bounds dismisses without confirming.
+    void processMouse(const ncinput* ev) override {
+        if (!ev) return;
+
+        if (ev->evtype == NCTYPE_RELEASE || ev->evtype == NCTYPE_UNKNOWN) {
+            bool inside = ev->x >= x && ev->x < x + width &&
+                          ev->y >= y && ev->y < y + height;
+            if (inside) {
+                _confirmed = list != nullptr;
+                _chosen    = list ? list->selected() : -1;
+            }
+            running = false;
+
+            return;
+        }
+
+        Container::processMouse(ev);
+    }
+};
+
+} // namespace nctui
+
+// -----------------------------------------------------------------------
+// Exported types
+// -----------------------------------------------------------------------
+export namespace nctui {
+
+// -----------------------------------------------------------------------
+// ComboBoxModel<T>
+//
+// Stores value/label pairs and serves as the IListProvider for both the
+// drop-down popup ListView and any external ListView that the caller
+// wants to share the same data with.
+// -----------------------------------------------------------------------
+
+template<typename T>
+class ComboBoxModel : public IListProvider {
+public:
+    struct Item {
+        T           value;
+        std::string label;
+    };
+
+private:
+    std::vector<Item> _items;
+    int               _selected = 0;
+
+public:
+    ComboBoxModel() = default;
+
+    /// Appends an item.  The label is copied from the string_view.
+    void add(T value, std::string_view label) {
+        _items.push_back({std::move(value), std::string(label)});
+    }
+
+    // IListProvider --------------------------------------------------------
+
+    std::size_t length()              override { return _items.size(); }
+    bool        isMarked(std::size_t) override { return false; }
+
+    void render(ncpp::Plane* plane, int y, int x, int w,
+                std::size_t index)    override
+    {
+        if (index >= _items.size()) return;
+        const auto& lbl = _items[index].label;
+        std::string shown(lbl, 0, static_cast<std::size_t>(w));
+        plane->putstr(y, x, shown.c_str());
+    }
+
+    // Accessors ------------------------------------------------------------
+
+    bool empty()   const { return _items.empty(); }
+    int  selected() const { return _selected; }
+
+    void selected(int i) {
+        if (i >= 0 && i < static_cast<int>(_items.size()))
+            _selected = i;
+    }
+
+    const T&           value()      const { return _items.at(_selected).value; }
+    const std::string& label()      const { return _items.at(_selected).label; }
+    std::string_view   labelAt(int i) const { return _items.at(i).label; }
+
+    /// Width of the longest label, used to size the popup.
+    int maxLabelWidth() const {
+        int w = 0;
+        for (auto& item : _items)
+            w = std::max(w, static_cast<int>(item.label.size()));
+
+        return w;
+    }
+};
+
+// -----------------------------------------------------------------------
+// ComboBox<T>
+//
+// A single-row widget showing the selected item's label and a [▼] button
+// on the right.  Pressing Enter, Space, or clicking anywhere on the
+// widget opens a framed drop-down popup backed by the shared model.
+// Up/Down arrows cycle the selection directly without opening the popup.
+// -----------------------------------------------------------------------
+
+template<typename T>
+class ComboBox : public Widget {
+private:
+    std::shared_ptr<ComboBoxModel<T>> _model;
+
+    /// Width of the drop-down indicator at the right edge (characters).
+    static constexpr int button_width = 3;  // "[▼]"
+
+    /// Absolute screen coordinates cached at the last redraw.
+    ///
+    /// Widget::x/y are relative to the parent container's inner area
+    /// when event handlers run, but Container::redrawChildren() sets
+    /// them to absolute coords for the duration of each redraw() call.
+    /// Caching them here lets openPopup() position the dropdown overlay
+    /// at the correct screen location regardless of nesting depth.
+    int _draw_x = 0;
+    int _draw_y = 0;
+
+    void openPopup() {
+        if (!_model || _model->empty()) return;
+
+        // Size the popup to fit the widest label, but at least as wide as
+        // the combo box itself.  Cap list height at 10 visible rows.
+        int item_count = static_cast<int>(_model->length());
+        int popup_w    = std::max(width, _model->maxLabelWidth() + 2);
+        popup_w        = std::min(popup_w, nctui::application::cols());
+
+        int list_rows  = std::min(item_count, 10);
+        int popup_h    = list_rows + 2;
+
+        // Prefer opening below the widget; fall back to above if clipped.
+        int px = std::clamp(_draw_x, 0, nctui::application::cols()  - popup_w);
+        int py = _draw_y + 1;
+        if (py + popup_h > nctui::application::lines())
+            py = _draw_y - popup_h;
+        py = std::max(0, py);
+
+        auto popup = std::make_shared<ComboBoxPopup>(
+            px, py, popup_w, popup_h, _model, _model->selected());
+
+        nctui::application::run(popup);
+
+        if (popup->confirmed() && popup->chosenIndex() >= 0) {
+            _model->selected(popup->chosenIndex());
+            if (onChanged) onChanged();
+            // No redraw() here — application::refresh() handles it once
+            // the event handler returns, at which point x/y are absolute.
+        }
+    }
+
+public:
+    /// Fired when the selected item changes (either from the popup or via
+    /// Up/Down arrow navigation).
+    std::function<void()> onChanged;
+
+    /// Constructs a ComboBox at (x, y) with total width w, backed by model.
+    ///
+    /// The widget is one row tall.  The rightmost three columns are reserved
+    /// for the [▼] drop-down indicator; the remaining columns show the
+    /// currently selected label.
+    ComboBox(int x, int y, int w, std::shared_ptr<ComboBoxModel<T>> model)
+        : Widget(x, y, w, 1), _model(std::move(model))
+    {
+        canFocus(true);
+    }
+
+    /// Returns the backing model.
+    std::shared_ptr<ComboBoxModel<T>> model() const { return _model; }
+
+    void redraw() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (!plane) return;
+
+        // x/y are local to whatever plane std_plane currently refers to (may
+        // be a Dialog's private plane, not the root screen plane).  Add the
+        // plane's own absolute screen offset so openPopup() positions the
+        // dropdown at the correct screen column/row regardless of nesting.
+        int plane_y = 0, plane_x = 0;
+        plane->get_yx(&plane_y, &plane_x);
+        _draw_x = x + plane_x;
+        _draw_y = y + plane_y;
+
+        uint64_t label_color  = hasFocus() ? colorFocus()    : colorNormal();
+        uint64_t button_color = hasFocus() ? colorHotFocus() : colorHotNormal();
+
+        // Label area: everything left of the [▼] button.
+        int label_w = width - button_width;
+        std::string shown(label_w, ' ');
+        if (_model && !_model->empty()) {
+            const auto& lbl = _model->label();
+            int copy = std::min(static_cast<int>(lbl.size()), label_w);
+            shown.replace(0, copy, lbl, 0, copy);
+        }
+
+        plane->set_channels(label_color);
+        plane->putstr(y, x, shown.c_str());
+
+        // Drop-down indicator button.
+        plane->set_channels(button_color);
+        plane->putstr(y, x + label_w, "[▼]");
+    }
+
+    void positionCursor() override {
+        ncpp::Plane* plane = nctui::application::std_plane;
+        if (plane) plane->cursor_move(y, x + width - 2);
+    }
+
+    bool processKey(char32_t key) override {
+        if (key == NCKEY_ENTER || key == ' ') {
+            openPopup();
+
+            return true;
+        }
+
+        if (key == NCKEY_UP && _model && _model->selected() > 0) {
+            _model->selected(_model->selected() - 1);
+            if (onChanged) onChanged();
+
+            return true;
+        }
+
+        if (key == NCKEY_DOWN && _model &&
+            _model->selected() + 1 < static_cast<int>(_model->length()))
+        {
+            _model->selected(_model->selected() + 1);
+            if (onChanged) onChanged();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    void processMouse(const ncinput* ev) override {
+        if (!ev || !container) return;
+
+        // Set focus on press so the widget highlights before the popup opens.
+        if (ev->evtype == NCTYPE_PRESS || ev->evtype == NCTYPE_UNKNOWN)
+            container->set_focused(shared_from_this());
+
+        // Open the popup on release so the mouse-up does not immediately
+        // land on the popup and confirm before the user sees it.
+        if (ev->evtype == NCTYPE_RELEASE || ev->evtype == NCTYPE_UNKNOWN)
+            openPopup();
+    }
+};
+
+} // export namespace nctui

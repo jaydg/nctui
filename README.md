@@ -25,6 +25,7 @@ It is a C++20 port of a Terminal UI framework originally created for the Mono pr
 | `TrimLabel`   | Label with automatic text trimming        |
 | `Checkbox`    | Toggleable checkbox                       |
 | `Entry`       | Single-line text input                    |
+| `Combobox`    | Multi-select that shows selection         |
 | `TextView`    | Multi-line text display and editing       |
 | `ListView`    | Scrollable list of items                  |
 | `ProgressBar` | Visual progress indicator                 |

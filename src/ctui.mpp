@@ -29,5 +29,6 @@ export import :messagebox;
 export import :progressbar;
 export import :textview;
 export import :listview;
+export import :combobox;
 export import :menubar;
 export import :radiogroup;
