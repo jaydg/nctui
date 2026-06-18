@@ -162,26 +162,26 @@ public:
     /// Returns the current cursor position within the text.
     int cursorPosition() const { return static_cast<int>(point); }
 
-    /// Shows or hides the terminal hardware cursor when focus changes.
+    /// Hides the hardware cursor immediately when focus is lost.
     ///
-    /// Mirrors the D original's curs_set(1)/curs_set(0) calls. Uses the
-    /// cursor_show/cursor_hide callbacks registered by application::init()
-    /// so that Entry does not need to import :application directly.
+    /// Widget::setFocus only sets _hasFocus; it does not call redraw().
+    /// The cursor_hide call here removes the cursor before the next
+    /// refresh pass, which would otherwise re-show it via redrawChildren.
     void setFocus(bool value) override {
-        Widget::setFocus(value);   // sets _hasFocus and calls redraw()
+        Widget::setFocus(value);
         if (!value) {
             if (nctui::application::cursor_hide) nctui::application::cursor_hide();
         }
-        // On focus gain, positionCursor() is called by the container after
-        // set_focused() — it will invoke cursor_show with the correct coords.
     }
 
-    /// Positions the terminal cursor at the current editing point and
-    /// enables the hardware cursor at that position.
+    /// Positions the terminal cursor at the current editing point.
     ///
-    /// Called by redraw() and after every keystroke so the blinking cursor
-    /// follows the editing point correctly.
+    /// Only acts when this Entry has focus: redrawChildren() calls redraw()
+    /// on every child (focused or not), so positionCursor() is invoked for
+    /// unfocused entries too; without the guard the cursor would reappear
+    /// after setFocus(false) hid it.
     void positionCursor() override {
+        if (!hasFocus()) return;
         int col = x + static_cast<int>(point - first);
         if (nctui::application::cursor_show) nctui::application::cursor_show(y, col);
     }
