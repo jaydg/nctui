@@ -109,6 +109,10 @@ private:
     std::shared_ptr<MenuBarItem> barItems;
     MenuBar*                     host;
     int                          current = 0;
+    /// Private plane so the drop-down renders above the TextView plane
+    /// (and any other widget that owns its own ncplane).  Created on first
+    /// redraw(); destroyed with the Menu object when the menu closes.
+    std::unique_ptr<ncpp::Plane> _popup;
 
     static void setColor(ncpp::Plane* plane, uint64_t channels) {
         plane->set_channels(channels);
@@ -133,6 +137,16 @@ private:
     void run(std::function<void()> action);
 
 public:
+    ~Menu() override {
+        // If notcurses has already been stopped (std_plane == nullptr after shutdown()),
+        // the popup's ncplane was freed by notcurses_stop() and ncpp::Plane::~Plane()
+        // would crash by calling is_notcurses_stopped() with a null _instance.
+        // Release the wrapper without calling its destructor; the leak is negligible
+        // since we are in process teardown.
+        if (_popup && !nctui::application::std_plane)
+            _popup.release();
+    }
+
     Menu(MenuBar* h, int x, int y, std::shared_ptr<MenuBarItem> items);
 
     /// Maximum display width of any child item.
@@ -145,14 +159,28 @@ public:
     }
 
     void redraw() override {
-        ncpp::Plane* plane = nctui::application::std_plane;
-        if (!plane) return;
+        if (!nctui::application::std_plane) return;
+
+        // (Re)create or reposition the popup plane at the current absolute
+        // screen position.  The plane is a child of std_plane so it is in the
+        // same pile, and — being created/placed last — it sits above any other
+        // widget plane (e.g. TextView) in the z-order.
+        if (!_popup) {
+            try {
+                _popup = std::make_unique<ncpp::Plane>(
+                    *nctui::application::std_plane,
+                    static_cast<int>(height), static_cast<int>(width), y, x);
+            } catch (...) { return; }
+        } else {
+            _popup->move(y, x);
+        }
+        ncpp::Plane* plane = _popup.get();
 
         int itemCount = static_cast<int>(barItems->children.size());
 
-        // Frame around the drop-down in the menu colour.
+        // Frame around the drop-down — coordinates are local to the popup plane.
         setColor(plane, nctui::theme::current().colorMenu);
-        Widget::drawFrame(plane, x, y, width, height, true);
+        Widget::drawFrame(plane, 0, 0, width, height, true);
 
         for (int i = 0; i < itemCount; ++i) {
             auto& item = barItems->children[i];
@@ -166,23 +194,23 @@ public:
             if (!item) {
                 // null entry → separator line
                 for (int p = 1; p < width - 1; ++p)
-                    plane->putstr(y + i + 1, x + p, "─");
+                    plane->putstr(i + 1, p, "─");
                 continue;
             }
             std::string blank(width - 2, ' ');
-            plane->putstr(y + i + 1, x + 1, blank.c_str());
+            plane->putstr(i + 1, 1, blank.c_str());
 
             // Title with hot-key highlight.
             uint64_t hotColor = (i == current)
                 ? nctui::theme::current().colorMenuHotSelected
                 : nctui::theme::current().colorMenuHot;
-            drawHotString(plane, y + i + 1, x + 1, item->title(), hotColor, rowColor);
+            drawHotString(plane, i + 1, 1, item->title(), hotColor, rowColor);
 
             // Right-aligned help text.
             if (!item->help.empty()) {
                 int l = static_cast<int>(item->help.length());
                 setColor(plane, rowColor);
-                plane->putstr(y + i + 1, x + width - l - 1, item->help.c_str());
+                plane->putstr(i + 1, width - l - 1, item->help.c_str());
             }
         }
 
@@ -190,8 +218,7 @@ public:
     }
 
     void positionCursor() override {
-        ncpp::Plane* plane = nctui::application::std_plane;
-        if (plane) plane->cursor_move(y + current + 1, x + 1);
+        if (_popup) _popup->cursor_move(current + 1, 1);
     }
 
     bool processKey(char32_t key) override {
