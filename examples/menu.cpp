@@ -1,5 +1,6 @@
 //
-// Demonstrates the MenuBar widget with File and Help menus.
+// Demonstrates the MenuBar widget with File and Help menus, and a
+// read-only TextView that shows the project README.
 //
 import nctui;
 
@@ -58,13 +59,26 @@ int main() {
     top->add(mb);
 
     // Frame below the menu bar (y=1, height reduced by 1 to leave room).
-    // The D original passes null as the title; we use an empty string.
     auto frame = std::make_shared<nctui::Frame>(
         0, 1,
         nctui::application::cols(),
         nctui::application::lines() - 1,
-        "");
+        "README.md");
+    frame->fill = nctui::Fill::Horizontal | nctui::Fill::Vertical;
     top->add(frame);
+
+    // Read-only TextView fills the frame interior.
+    // Position (0, 0) is relative to the frame's inner area; the library
+    // (placeOnScreen / doSizeChanged) handles absolute placement and resize.
+    auto tv = std::make_shared<nctui::TextView>(
+        *nctui::application::std_plane,
+        0, 0,
+        nctui::application::cols() - 2,
+        nctui::application::lines() - 3);
+    tv->fill = nctui::Fill::Horizontal | nctui::Fill::Vertical;
+    tv->isReadOnly = true;
+    tv->loadFile("README.md");
+    frame->add(tv);
 
     nctui::application::run(top);
     return 0;

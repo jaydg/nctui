@@ -99,7 +99,11 @@ inline bool handleInput() {
         // propagate sizeChanged() through the container hierarchy.
         if (id == NCKEY_RESIZE) {
             ::notcurses_refresh(*nc, &_lines, &_cols);
-            for (auto& c : toplevels) c->sizeChanged();
+            for (auto& c : toplevels) {
+                c->width  = static_cast<int>(_cols);
+                c->height = static_cast<int>(_lines);
+                c->sizeChanged();
+            }
             refresh();
             continue;
         }

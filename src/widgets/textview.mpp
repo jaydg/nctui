@@ -157,9 +157,6 @@ public:
 ///   Enter                  — Insert a newline.
 class TextView : public Widget {
 private:
-    uint64_t normalChannels = 0;
-    uint64_t focusChannels  = 0;
-
     bool selecting             = false;
     int selectionStartColumn   = 0;
     int selectionStartRow      = 0;
@@ -306,15 +303,11 @@ public:
         opts.rows = static_cast<unsigned>(h);
         opts.cols = static_cast<unsigned>(w);
         plane = ncplane_create(parent_plane, &opts);
-
-        ncchannels_set_fchannel(&normalChannels, 0xCCCCCC);
-        ncchannels_set_bchannel(&normalChannels, 0x111111);
-        ncchannels_set_fchannel(&focusChannels,  0xFFFFFF);
-        ncchannels_set_bchannel(&focusChannels,  0x222222);
     }
 
     ~TextView() {
-        if (plane) ncplane_destroy(plane);
+        if (plane && nctui::application::std_plane)
+            ncplane_destroy(plane);
     }
 
     /// Gets the text content of the widget.
@@ -359,8 +352,10 @@ public:
 
     void redraw() override {
         if (!plane) return;
+        uint64_t channels = hasFocus() ? colorHotNormal() : colorNormal();
+        ncplane_set_base(plane, " ", 0, channels);
         ncplane_erase(plane);
-        ncplane_set_channels(plane, hasFocus() ? focusChannels : normalChannels);
+        ncplane_set_channels(plane, channels);
 
         unsigned uh, uw;
         planeDim(uh, uw);
@@ -382,6 +377,28 @@ public:
         positionCursor();
     }
 
+    /// Moves the private ncplane to the widget's current screen position.
+    ///
+    /// Called by Container::redrawChildren() with absolute coordinates
+    /// already set on x/y, so the plane tracks wherever the container has
+    /// placed this widget — without needing the example to pass absolute
+    /// coordinates to the constructor.
+    void placeOnScreen() override {
+        if (plane) ncplane_move_yx(plane, y, x);
+    }
+
+    /// Resizes the private ncplane to match the widget's current dimensions.
+    ///
+    /// Called by Container::doSizeChanged() after fill has been applied, so
+    /// width and height already reflect the new terminal size.
+    void doSizeChanged() override {
+        if (!plane) return;
+        int nw = std::max(1, width);
+        int nh = std::max(1, height);
+        ncplane_resize_simple(plane,
+            static_cast<unsigned>(nh), static_cast<unsigned>(nw));
+    }
+
     /// Positions the cursor on the current row and column and enables
     /// the hardware cursor there via cursor_show.
     void positionCursor() override {
@@ -393,11 +410,12 @@ public:
         int sx = currentColumn - leftColumn;
         if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
             ncplane_cursor_move_yx(plane, sy, sx);
-            // Enable the hardware cursor at the absolute terminal position.
-            // The plane is positioned at (y, x) on the terminal, so the
-            // absolute cursor position is (y + sy, x + sx).
+            // Use the plane's actual screen position rather than the widget's
+            // x/y fields: those are restored to local coords after each
+            // redrawChildren() pass, so they are not reliable here.
             if (nctui::application::cursor_show)
-                nctui::application::cursor_show(y + sy, x + sx);
+                nctui::application::cursor_show(
+                    ncplane_y(plane) + sy, ncplane_x(plane) + sx);
         }
     }
 
@@ -619,13 +637,24 @@ public:
     /// coordinates and moves the cursor to the clicked position.
     void processMouse(const ncinput* ev) override {
         if (!ev || !plane) return;
+
+        if (ev->id == NCKEY_BUTTON4) {
+            topRow = std::max(0, topRow - 3);
+            redraw();
+            return;
+        }
+        if (ev->id == NCKEY_BUTTON5) {
+            topRow = std::min(std::max(0, static_cast<int>(model->lineCount()) - 1), topRow + 3);
+            redraw();
+            return;
+        }
+
         if (ev->evtype == NCTYPE_RELEASE) return;
 
         if (!hasFocus() && container)
             container->set_focused(shared_from_this());
 
         int rel_y = ev->y, rel_x = ev->x;
-        ncplane_translate_abs(plane, &rel_y, &rel_x);
 
         unsigned uh, uw;
         planeDim(uh, uw);

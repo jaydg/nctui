@@ -140,6 +140,14 @@ export namespace nctui {
         /// Called when the terminal is resized. Override to adjust layout.
         virtual void doSizeChanged() {}
 
+        /// Called by redrawChildren() with absolute coordinates already set.
+        ///
+        /// Override in widgets that own a private ncplane whose position must
+        /// track the widget's screen coordinates (e.g. TextView). The default
+        /// implementation is a no-op — standard widgets draw on the shared
+        /// std_plane and do not need repositioning.
+        virtual void placeOnScreen() {}
+
         /// Called before keys are dispatched to the focused widget, giving
         /// all widgets a chance to handle global accelerators (Alt-key).
         ///

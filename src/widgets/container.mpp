@@ -324,6 +324,7 @@ public:
             int saved_x = w->x, saved_y = w->y;
             w->x = x + border + saved_x;
             w->y = y + border + saved_y;
+            w->placeOnScreen();
             w->redraw();
             // ALWAYS restore: x/y must remain relative between draw passes.
             w->x = saved_x;
@@ -338,11 +339,13 @@ public:
     void doSizeChanged() override {
         if (onSizeChanged) onSizeChanged();
         for (auto& w : widgets) {
-            w->doSizeChanged();
+            // Apply fill before recursing so children see their updated
+            // dimensions when their own doSizeChanged() runs.
             if ((w->fill & Fill::Horizontal) != Fill::None)
                 w->width  = width  - (border * 2) - w->x;
             if ((w->fill & Fill::Vertical) != Fill::None)
                 w->height = height - (border * 2) - w->y;
+            w->doSizeChanged();
         }
     }
 };
