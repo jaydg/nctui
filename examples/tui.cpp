@@ -209,7 +209,7 @@ static void optionsDialog() {
     d->add(std::make_shared<nctui::Label>(1,  9, "        Stealth Mode:"));
     d->add(std::make_shared<nctui::Label>(1, 13, "         Color Theme:"));
 
-    auto download_dir   = std::make_shared<nctui::Entry>(24, 1, 30, "~/Download");
+    auto download_dir   = std::make_shared<nctui::Entry>(24, 1, 30, "~/Downloads");
     auto listen_port    = std::make_shared<nctui::Entry>(24, 3,  6, "34");
     auto upload_limit   = std::make_shared<nctui::Entry>(24, 5, 10, "1024");
     auto download_limit = std::make_shared<nctui::Entry>(24, 7, 10, "1024");
