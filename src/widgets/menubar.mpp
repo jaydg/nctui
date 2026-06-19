@@ -421,7 +421,7 @@ public:
     }
 
     bool processHotKey(char32_t key) override {
-        // F9 opens the first menu (matches the D original KEY_F(9) handler).
+        // F9 opens the first menu
         if (key == NCKEY_F09) {
             startMenu();
             return true;
@@ -446,8 +446,7 @@ public:
         if (!ev) return;
 
         // Accept PRESS, RELEASE, and UNKNOWN (some terminals report a click
-        // as NCTYPE_UNKNOWN). Mirrors the D original which checks
-        // BUTTON1_CLICKED || BUTTON1_RELEASED.
+        // as NCTYPE_UNKNOWN).
         if (ev->evtype == NCTYPE_PRESS ||
             ev->evtype == NCTYPE_RELEASE ||
             ev->evtype == NCTYPE_UNKNOWN)

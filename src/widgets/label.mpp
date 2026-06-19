@@ -66,9 +66,8 @@ public:
 
     /// Sets the text displayed by this widget.
     ///
-    /// The old text area is cleared with spaces first (matching the D
-    /// original which overwrites with addch(' ') for each old character),
-    /// then the new text is rendered and the widget width is updated.
+    /// The old text area is cleared with spaces first, then the
+    /// new text is rendered and the widget width is updated.
     void text(const std::string& value) {
         ncpp::Plane* plane = nctui::application::std_plane;
 

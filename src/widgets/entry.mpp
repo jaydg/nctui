@@ -306,8 +306,7 @@ public:
                         setText(_text.substr(0, point) + c + _text.substr(point));
                         point++;
                     } else {
-                        // First keystroke: replace the initial text entirely,
-                        // matching the D original's behaviour (used flag).
+                        // First keystroke: replace the initial text entirely
                         setText(std::string(1, c));
                         first = 0;
                         point = 1;
@@ -326,8 +325,7 @@ public:
 
     void processMouse(const ncinput* ev) override {
         if (!ev || !container) return;
-        // The D original returns immediately on BUTTON1_CLICKED/RELEASED —
-        // only drag events (neither click nor release) reposition the cursor.
+        // only drag events (neither click nor release) reposition the cursor
         if (ev->evtype == NCTYPE_RELEASE) return;
 
         container->set_focused(shared_from_this());

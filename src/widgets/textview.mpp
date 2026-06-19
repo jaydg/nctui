@@ -339,8 +339,8 @@ public:
 
     /// Shows or hides the terminal hardware cursor when focus changes.
     ///
-    /// Mirrors the D original's curs_set(1)/curs_set(0) calls. Uses the
-    /// cursor_show/cursor_hide callbacks registered by application::init().
+    /// Uses the cursor_show/cursor_hide callbacks registered by
+    /// application::init().
     void setFocus(bool value) override {
         Widget::setFocus(value);   // sets _hasFocus and calls redraw()
         if (!value) {

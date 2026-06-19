@@ -103,7 +103,7 @@ export namespace nctui::theme {
 
 /// Returns the built-in classic-blue color palette.
 ///
-/// This is the compiled-in default that mirrors the D ctui original.
+/// This is the compiled-in default that mirrors mono-curses' gui.cs.
 inline nctui::Theme defaultTheme() {
     return {
         NCCHANNELS_INITIALIZER(0xFF,0xFF,0xFF, 0x00,0x00,0xAA),  // colorNormal:   White on blue

@@ -312,8 +312,7 @@ public:
     }
 
     /// Redraws all children, setting their absolute terminal coordinates
-    /// before each draw call — mirroring the D original which updates
-    /// child positions in-place rather than save/restore.
+    /// before each draw call.
     ///
     /// x/y of children are restored to relative after each redraw() call.
     void redrawChildren(ncpp::Plane* plane) {

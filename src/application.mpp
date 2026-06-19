@@ -78,7 +78,7 @@ inline void refresh() {
 /// Terminal resize is handled by notcurses itself via a synthesised
 /// NCKEY_RESIZE event — no SIGWINCH handler is needed.
 ///
-/// Key dispatch follows the same three-phase protocol as the D original:
+/// Key dispatch follows this three-phase protocol:
 ///   1. processHotKey  — global accelerators (Alt-key combinations)
 ///   2. processKey     — normal key handling for the focused widget
 ///   3. processColdKey — cold accelerators (e.g. Enter on default buttons)
