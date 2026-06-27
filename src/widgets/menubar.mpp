@@ -432,11 +432,21 @@ public:
         // and returns the base character, or 0 if Alt was not held.
         if (int base = nctui::isAlt(key)) {
             char32_t hk = std::toupper(static_cast<unsigned char>(base));
+
+            // Alt+letter matching a menu bar title opens that menu.
             for (std::size_t i = 0; i < menus.size(); ++i)
                 if (menus[i]->hotKey == hk) {
                     activate(static_cast<int>(i));
                     return true;
                 }
+
+            // Alt+letter matching a menu item's hotkey triggers it directly.
+            for (auto& menu : menus)
+                for (auto& item : menu->children)
+                    if (item && item->hotKey == hk) {
+                        if (item->action) item->action();
+                        return true;
+                    }
         }
 
         return false;
