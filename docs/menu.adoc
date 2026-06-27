@@ -1,0 +1,199 @@
+= Menu System
+
+[[top]]
+Back to <<index.adoc#,index>>.
+
+The nctui menu system provides drop-down menu functionality through the `MenuBar`, `MenuBarItem`, and `MenuItem` widgets.
+
+== Basic Menu Setup
+
+Create a menu bar with drop-down menus:
+
+----
+import nctui;
+
+int main() {
+    nctui::application::init();
+
+    auto top = std::make_shared<nctui::Container>(
+        0, 0,
+        nctui::application::cols(),
+        nctui::application::lines());
+
+    // Create File menu
+    auto fileMenu = std::make_shared<nctui::Menu>("File");
+    fileMenu->addItem("Open", []() { /* handle open */ });
+    fileMenu->addItem("Save", []() { /* handle save */ });
+    fileMenu->addSeparator();
+    fileMenu->addItem("Quit", []() { /* handle quit */ });
+
+    // Create Help menu
+    auto helpMenu = std::make_shared<nctui::Menu>("Help");
+    helpMenu->addItem("About", []() {
+        nctui::application::info("About", "My Application v1.0");
+    });
+
+    // Create menu bar and add menus
+    auto menubar = std::make_shared<nctui::MenuBar>();
+    menubar->addMenu(fileMenu);
+    menubar->addMenu(helpMenu);
+
+    // Add menu bar to container
+    top->add(menubar);
+
+    nctui::application::run(top);
+    return 0;
+}
+----
+
+== Menu Structure
+
+[cols="2,3"]
+|===
+| Widget | Purpose
+| `MenuBar` | Top-level container that holds menu items
+| `MenuBarItem` | A single item in the menu bar (e.g., "File", "Edit")
+| `Menu` | A drop-down menu that appears when a menu bar item is activated
+| `MenuItem` | A single item within a drop-down menu
+|===
+
+== Using MenuBarItem
+
+The `MenuBarItem` class represents a top-level menu item in the menu bar:
+
+----
+auto mFile = std::make_shared<nctui::MenuBarItem>(
+    "_File",  // Text with hot key (Alt+F)
+    std::vector<std::shared_ptr<nctui::MenuItem>>{
+        std::make_shared<nctui::MenuItem>("_Open", "", []() {
+            /* handle open */
+        }),
+        std::make_shared<nctui::MenuItem>("_Save", "", []() {
+            /* handle save */
+        }),
+        std::make_shared<nctui::MenuItem>("-", "", nullptr), // Separator
+        std::make_shared<nctui::MenuItem>("_Quit", "", []() {
+            top->running = false;
+        })
+    }
+);
+----
+
+== Menu Item Actions
+
+Each menu item can have an action (callback function) that is executed when the item is selected:
+
+----
+auto item = std::make_shared<nctui::MenuItem>(
+    "_Save",                    // Display text with hot key
+    "Ctrl+S",                  // Optional accelerator hint
+    []() {                      // Action callback
+        saveFile();
+    }
+);
+----
+
+== Hot Keys and Accelerators
+
+Menu items support hot keys using the underscore notation:
+
+----
+// Hot key is 'O' (Alt+O)
+fileMenu->addItem("_Open", []() { /* handle open */ });
+
+// Hot key is 'S' (Alt+S)
+fileMenu->addItem("_Save", []() { /* handle save */ });
+
+// Hot key is 'Q' (Alt+Q)
+fileMenu->addItem("_Quit", []() { /* handle quit */ });
+----
+
+When the menu bar has focus, pressing Alt+O will directly activate the Open menu item.
+
+== Separators
+
+Use `addSeparator()` or a separator item to visually group menu items:
+
+----
+fileMenu->addItem("Open", ...);
+fileMenu->addItem("Save", ...);
+fileMenu->addSeparator();  // Adds a horizontal separator line
+fileMenu->addItem("Quit", ...);
+----
+
+== Enabling/Disabling Menu Items
+
+You can control whether a menu item is selectable:
+
+----
+auto saveItem = fileMenu->addItem("Save", []() { /* ... */ });
+saveItem->enabled = false; // Grayed out, cannot be selected
+
+// Later...
+saveItem->enabled = true; // Re-enable the item
+----
+
+== Menu Navigation
+
+When the menu bar has focus:
+
+* Use Left/Right arrow keys to navigate between top-level menu items
+* Use Down arrow or Enter to open a drop-down menu
+* Use Up/Down arrow keys to navigate within the drop-down menu
+* Press Enter or Space to activate a menu item
+* Press Escape to close the drop-down menu
+
+== Complete Menu Bar Example
+
+----
+// Create menu bar items
+auto mFile = std::make_shared<nctui::MenuBarItem>(
+    "_File",
+    std::vector<std::shared_ptr<nctui::MenuItem>>{
+        std::make_shared<nctui::MenuItem>("_Open", "", []() {
+            openFile();
+        }),
+        std::make_shared<nctui::MenuItem>("_Save", "", []() {
+            saveFile();
+        }),
+        std::make_shared<nctui::MenuItem>("Save _As...", "", []() {
+            saveAsFile();
+        }),
+        std::make_shared<nctui::MenuItem>("-", "", nullptr),
+        std::make_shared<nctui::MenuItem>("_Quit", "Alt+F4", []() {
+            top->running = false;
+        })
+    }
+);
+
+auto mEdit = std::make_shared<nctui::MenuBarItem>(
+    "_Edit",
+    std::vector<std::shared_ptr<nctui::MenuItem>>{
+        std::make_shared<nctui::MenuItem>("_Cut", "Ctrl+X", []() { cut(); }),
+        std::make_shared<nctui::MenuItem>("_Copy", "Ctrl+C", []() { copy(); }),
+        std::make_shared<nctui::MenuItem>("_Paste", "Ctrl+V", []() { paste(); }),
+    }
+);
+
+auto mHelp = std::make_shared<nctui::MenuBarItem>(
+    "_Help",
+    std::vector<std::shared_ptr<nctui::MenuItem>>{
+        std::make_shared<nctui::MenuItem>("_About", "", []() {
+            nctui::application::info("About", "My Application\nVersion 1.0");
+        })
+    }
+);
+
+// Create menu bar
+auto mb = std::make_shared<nctui::MenuBar>(
+    std::vector<std::shared_ptr<nctui::MenuBarItem>>{ mFile, mEdit, mHelp }
+);
+
+// Add to container
+top->add(mb);
+----
+
+== Navigation
+
+* Back to <<index.adoc#,index>>
+* <<widgets.adoc#,Widget Reference>>

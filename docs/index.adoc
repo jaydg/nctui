@@ -5,17 +5,17 @@ https://notcurses.com[notcurses].
 
 == Getting Started
 
-Add `ctui` as a dependency, call `application::init()`, build a container
+Add `nctui` as a dependency, call `application::init()`, build a container
 hierarchy, and pass it to `application::run()`.
 
 ----
-#include <ctui>
+#include <nctui>
 
 int main() {
     nctui::application::init();
     auto top = std::make_shared<nctui::Container>(0, 0,
         nctui::application::cols(), nctui::application::lines());
-    // … add widgets …
+    // ... add widgets ...
     nctui::application::run(top);
 }
 ----
@@ -30,5 +30,10 @@ See <<widgets.adoc,Widget Reference>> for a full list of available widgets.
 
 == Sections
 
-* <<widgets.adoc,Widgets>>
-* <<themes.adoc,Themes>>
+* <<usage.adoc,Usage>> - Project setup, module imports, and requirements
+* <<widgets.adoc,Widgets>> - Comprehensive widget reference
+* <<input.adoc,Input Handling>> - Key processing phases and hot keys
+* <<focus.adoc,Focus Management>> - Widget focus and navigation
+* <<dialogs.adoc,Dialogs>> - Message boxes and dialog widgets
+* <<menu.adoc,Menu System>> - Menu bar and drop-down menus
+* <<themes.adoc,Themes>> - Color themes and styling

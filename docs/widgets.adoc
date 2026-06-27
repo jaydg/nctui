@@ -3,52 +3,348 @@
 [[top]]
 Back to <<index.adoc#,index>>.
 
+This document provides a comprehensive reference for all widgets available in nctui.
+
 == Container Widgets
+
+Container widgets can hold other widgets and manage their layout.
+
+=== Container
+
+The base class for custom widget containers. Provides positioning and sizing for child widgets.
+
+* *Inherits*: Widget
+* *Purpose*: Base container for building custom widget layouts
+
+Example:
+
+----
+auto container = std::make_shared<nctui::Container>(
+    x, y, width, height);
+container->add(childWidget);
+----
 
 === Frame
 
-A bordered container with an optional title embedded in the top border.
-Supports *resizable borders* — set `resizableH` or `resizableV` and connect
-neighbors with `setRightNeighbor()` / `setBottomNeighbor()`.
+A bordered container with an optional title embedded in the top border. Supports *resizable borders* — set `resizableH` or `resizableV` and connect neighbors with `setRightNeighbor()` / `setBottomNeighbor()`.
+
+* *Inherits*: Widget
+* *Properties*: title, border style
+
+Example:
+
+----
+auto frame = std::make_shared<nctui::Frame>(
+    0, 0, cols, lines, "My Frame Title");
+frame->fill = nctui::Fill::Horizontal | nctui::Fill::Vertical;
+----
 
 === Dialog
 
-A modal dialog container that inherits Frame and adds standard button
-placement.
+A modal dialog container that inherits Frame and adds standard button placement. Dialogs are typically used for temporary interactions that require user input.
+
+* *Inherits*: Frame
+* *Properties*: title
+* *Methods*: addButton()
+
+Example:
+
+----
+auto dlg = std::make_shared<nctui::Dialog>(40, 10, "My Dialog");
+auto btn = std::make_shared<nctui::Button>("OK");
+btn->clicked = []() { dlg->running = false; };
+dlg->addButton(btn);
+application::run(dlg);
+----
+
+== Control Widgets
+
+=== Button
+
+A clickable button with customizable text. Buttons can have a default action that is triggered when pressed.
+
+* *Inherits*: Widget
+* *Properties*: text, isDefault, clicked callback
+* *Focusable*: Yes
+
+Example:
+
+----
+auto btn = std::make_shared<nctui::Button>("Click me");
+btn->clicked = []() {
+    // Handle button click
+};
+
+// Default button (activated by Enter)
+auto defaultBtn = std::make_shared<nctui::Button>("OK", true);
+----
+
+=== CheckBox
+
+A boolean toggle widget. The hot-key character (e.g. `_F_ile`) can be set to provide keyboard shortcut access.
+
+* *Inherits*: Widget
+* *Properties*: text, checked, canFocus
+* *Focusable*: Yes
+
+Example:
+
+----
+auto checkbox = std::make_shared<nctui::Checkbox>("_Enable Feature");
+checkbox->checked = true;
+----
+
+=== RadioGroup
+
+A group of mutually exclusive radio buttons. Only one button in the group can be selected at a time.
+
+* *Inherits*: Widget
+* *Properties*: selected index
+* *Focusable*: Yes
+
+Example:
+
+----
+auto radio = std::make_shared<nctui::RadioGroup>(
+    x, y,
+    std::vector<std::string>{ "Option 1", "_Option 2", "Option 3" });
+radio->selected(1); // Select second option
+----
 
 == Input Widgets
 
 [[entry]]
 === Entry
 
-Single-line text input. Supports cut/copy/paste via the clipboard and
-word-motion keys (`Ctrl+Left` / `Ctrl+Right`).
+Single-line text input. Supports cut/copy/paste via the clipboard and word-motion keys (`Ctrl+Left` / `Ctrl+Right`).
 
-=== CheckBox
+* *Inherits*: Widget
+* *Properties*: text, readOnly
+* *Focusable*: Yes
 
-A boolean toggle widget.  The hot-key character (e.g. `_F_ile`) can be set
-to provide keyboard shortcut access.
+Example:
+
+----
+auto entry = std::make_shared<nctui::Entry>(1, 1, 30, "Initial text");
+entry->readOnly = false;
+----
 
 === ComboBox
 
-A drop-down selector showing a popup list when activated.
+A drop-down selector showing a popup list when activated. Use with a ComboBoxModel to provide the list of selectable items.
+
+* *Inherits*: Widget
+* *Properties*: model, selected index, onChanged callback
+* *Focusable*: Yes
+
+Example:
+
+----
+auto model = std::make_shared<nctui::ComboBoxModel<std::string>>();
+model->add("value1", "Display 1");
+model->add("value2", "Display 2");
+model->add("value3", "Display 3");
+
+auto combo = std::make_shared<nctui::ComboBox<std::string>>(
+    1, 1, 20, model);
+
+combo->onChanged = []() {
+    // Selection changed
+};
+----
 
 == Display Widgets
 
 === Label
 
-A non-focusable text widget.  Use `TrimLabel` for text that should be
-truncated to fit the available width.
+A non-focusable text widget. Use `TrimLabel` for text that should be truncated to fit the available width.
+
+* *Inherits*: Widget
+* *Properties*: text, textColor
+* *Focusable*: No
+
+Example:
+
+----
+auto label = std::make_shared<nctui::Label>(1, 1, "Static text");
+----
+
+=== TrimLabel
+
+A label with automatic text trimming. If the text is longer than the available width, it will be truncated and an ellipsis may be added.
+
+* *Inherits*: Label
+* *Properties*: text, ellipsis
+* *Focusable*: No
+
+Example:
+
+----
+auto trimLabel = std::make_shared<nctui::TrimLabel>(
+    1, 1, 20, "This text might be too long");
+trimLabel->fill = nctui::Fill::Horizontal;
+----
 
 === ProgressBar
 
-Renders a filled horizontal bar.  Useful for background task indicators.
+Renders a filled horizontal bar. Useful for background task indicators.
+
+* *Inherits*: Widget
+* *Properties*: fraction (0.0 to 1.0)
+* *Focusable*: No
+
+Example:
+
+----
+auto progress = std::make_shared<nctui::ProgressBar>(1, 1, 30);
+progress->fraction(0.5f); // 50% complete
+----
 
 === TextView
 
-A scrollable multi-line text area (read-only).
+A scrollable multi-line text area. Can be used for read-only display or editing, depending on the `isReadOnly` property.
+
+* *Inherits*: Widget
+* *Properties*: text, isReadOnly, wordWrap
+* *Focusable*: Yes
+
+Example:
+
+----
+auto textview = std::make_shared<nctui::TextView>(
+    *application::std_plane,
+    0, 0,
+    cols - 2,
+    lines - 3);
+textview->fill = nctui::Fill::Horizontal | nctui::Fill::Vertical;
+textview->isReadOnly = true;
+textview->loadFile("README.md");
+----
+
+== List Widgets
+
+=== ListView
+
+A scrollable list of items. Requires an IListProvider implementation to provide the list data.
+
+* *Inherits*: Widget
+* *Properties*: model, selected index, onSelected callback
+* *Focusable*: Yes
+
+Example:
+
+----
+class MyListProvider : public nctui::IListProvider {
+public:
+    std::size_t length() override { return items.size(); }
+    bool isMarked(std::size_t index) override { return false; }
+    void render(ncpp::Plane* plane, int y, int x, int w, std::size_t index) override {
+        // Custom rendering logic
+    }
+    bool processKey(char32_t key) override { return false; }
+    void selectedChanged() override {}
+};
+
+auto list = std::make_shared<nctui::ListView>(
+    1, 1, 0, 0,
+    std::make_shared<MyListProvider>());
+list->fill = nctui::Fill::Horizontal | nctui::Fill::Vertical;
+----
+
+== Menu Widgets
+
+=== MenuBar
+
+Top-level container for drop-down menus. Manages the display of menu items and handles menu navigation.
+
+* *Inherits*: Widget
+* *Properties*: items
+* *Focusable*: Yes
+
+Example:
+
+----
+auto menubar = std::make_shared<nctui::MenuBar>(
+    std::vector<std::shared_ptr<nctui::MenuBarItem>>{ ... });
+----
+
+=== MenuBarItem
+
+A single item in the menu bar (e.g., "File", "Edit"). Contains a drop-down menu of MenuItems.
+
+* *Inherits*: Widget
+* *Properties*: text, menu
+
+Example:
+
+----
+auto mFile = std::make_shared<nctui::MenuBarItem>(
+    "_File",
+    std::vector<std::shared_ptr<nctui::MenuItem>>{ ... });
+----
+
+=== Menu
+
+A drop-down menu that appears when a menu bar item is activated. Manages a list of MenuItems.
+
+* *Inherits*: Widget
+* *Properties*: title, items
+
+Example:
+
+----
+auto fileMenu = std::make_shared<nctui::Menu>("File");
+fileMenu->addItem("_Open", []() { /* ... */ });
+fileMenu->addItem("_Save", []() { /* ... */ });
+fileMenu->addSeparator();
+fileMenu->addItem("_Quit", []() { /* ... */ });
+----
+
+=== MenuItem
+
+A single item within a drop-down menu. Can have an action callback that is executed when selected.
+
+* *Inherits*: Widget
+* *Properties*: text, shortcut, action, enabled
+
+Example:
+
+----
+auto item = std::make_shared<nctui::MenuItem>(
+    "_Save",                    // Display text
+    "Ctrl+S",                  // Shortcut hint
+    []() { saveFile(); });     // Action callback
+----
+
+== Message Dialogs
+
+=== MessageBox
+
+Pre-configured message dialogs for common use cases.
+
+* *Static methods*: messageBox(), info(), error()
+* *Focusable*: N/A (modal)
+
+Example:
+
+----
+// Simple message box
+nctui::messageBox("Title", "Message text");
+
+// Yes/No dialog
+bool result = nctui::messageBox(
+    "Question", "Continue?",
+    nctui::MessageBoxButtons::YesNo);
+
+// Display information
+application::info("About", "Version 1.0");
+
+// Display error
+application::error("Error", "File not found");
+----
 
 == Navigation
 
-* Jump to <<entry,Entry widget>>
 * Back to <<index.adoc#,index>>
+* <<input.adoc#,Input Handling>>
+* <<focus.adoc#,Widget Focus and Navigation>>

@@ -1,0 +1,119 @@
+= Dialogs and Message Boxes
+
+[[top]]
+Back to <<index.adoc#,index>>.
+
+nctui provides convenient functions and widgets for displaying dialogs and message boxes.
+
+== MessageBox
+
+The `messageBox` function provides a simple way to display informational messages or ask for user confirmation:
+
+----
+// Simple message box with OK button
+nctui::messageBox("Title", "Message text");
+
+// Yes/No dialog - returns true if Yes is selected
+bool result = nctui::messageBox(
+    "Question",
+    "Continue?",
+    nctui::MessageBoxButtons::YesNo
+);
+
+// OK/Cancel dialog
+bool shouldSave = nctui::messageBox(
+    "Save Changes",
+    "You have unsaved changes. Save before exiting?",
+    nctui::MessageBoxButtons::OkCancel
+);
+----
+
+== MessageBox Buttons
+
+The `MessageBoxButtons` enum provides the following options:
+
+[cols="2,2,3"]
+|===
+| Option | Buttons | Return Value
+| `Ok` | OK | true
+| `YesNo` | Yes, No | true for Yes, false for No
+| `OkCancel` | OK, Cancel | true for OK, false for Cancel
+|===
+
+== Application Message Functions
+
+The `application` namespace provides additional convenience functions:
+
+----
+// Display an informational message
+application::info("About nctui", "Version 1.0.0");
+
+// Display an error message
+application::error("Error", "File not found");
+----
+
+== Dialog Widget
+
+For more complex dialogs, use the `Dialog` widget directly:
+
+----
+auto dlg = std::make_shared<nctui::Dialog>(40, 10, "My Dialog");
+
+// Add content widgets
+dlg->add(std::make_shared<nctui::Label>(1, 1, "Enter your name:"));
+auto entry = std::make_shared<nctui::Entry>(1, 2, 30);
+dlg->add(entry);
+
+// Add buttons
+auto okBtn = std::make_shared<nctui::Button>("OK", true); // true = isDefault
+okBtn->clicked = [&]() {
+    dlg->running = false;
+    // Process entry->text()...
+};
+dlg->addButton(okBtn);
+
+auto cancelBtn = std::make_shared<nctui::Button>("Cancel");
+cancelBtn->clicked = [&]() {
+    dlg->running = false;
+};
+dlg->addButton(cancelBtn);
+
+// Run the dialog modally
+application::run(dlg);
+----
+
+== Default Buttons
+
+Dialog buttons can be marked as default, which means they will be activated when the user presses Enter, even if a different widget has focus:
+
+----
+auto btn = std::make_shared<nctui::Button>("OK", true); // true = isDefault
+----
+
+== Dialog Layout
+
+Dialogs are typically centered on screen by default. You can customize their position:
+
+----
+auto dlg = std::make_shared<nctui::Dialog>(cols, lines, "Title", x, y);
+----
+
+Or let the application center it:
+
+----
+auto dlg = std::make_shared<nctui::Dialog>(cols, lines, "Title");
+application::run(dlg); // Will be centered
+----
+
+== Modal Behavior
+
+When running a dialog with `application::run()`, it becomes modal, meaning:
+
+* It receives all input
+* The parent container is temporarily suspended
+* When the dialog's `running` property is set to false, control returns to the parent
+
+== Navigation
+
+* Back to <<index.adoc#,index>>
+* <<widgets.adoc#,Widget Reference>>

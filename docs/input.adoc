@@ -1,0 +1,74 @@
+= Input Handling
+
+[[top]]
+Back to <<index.adoc#,index>>.
+
+nctui supports three-phase key processing for flexible input handling:
+
+== Key Processing Phases
+
+. *Hot Keys* (Global accelerators) - Alt-key combinations processed first
+. *Normal Keys* - Sent to the focused widget
+. *Cold Keys* (Cold accelerators) - e.g., Enter on default buttons
+
+== Special Keys
+
+[cols="2,3"]
+|===
+| Key Combination | Action
+| *Tab* / *Shift+Tab* | Cycle focus between widgets
+| *Ctrl+C* | Stop the current top-level container's run loop
+| *Alt+X* | Common hot key pattern for menu accelerators
+|===
+
+== Using Hot Keys
+
+Hot keys are typically defined using the underscore character in menu items and button labels. The character following the underscore becomes the hot key:
+
+----
+// Menu item with hot key 'O' (Alt+O)
+fileMenu->addItem("_Open", []() { /* handle open */ });
+
+// Menu item with hot key 'S' (Alt+S)
+fileMenu->addItem("_Save", []() { /* handle save */ });
+----
+
+== Key Handling in Widgets
+
+Widgets can override the `processKey` method to handle specific key presses:
+
+----
+class MyWidget : public nctui::Widget {
+public:
+    bool processKey(char32_t key) override {
+        switch (key) {
+            case 'a':
+                // Handle 'a' key
+                return true;
+            case KEY_ENTER:
+                // Handle Enter key
+                return true;
+            default:
+                return false;
+        }
+    }
+};
+----
+
+== Main Loop Integration
+
+For custom key handling at the application level, you can use the MainLoop's timeout mechanism or override key processing in your container:
+
+----
+// Using MainLoop for timer-based events
+nctui::MainLoop ml;
+ml.addTimeout(std::chrono::seconds(1), []() {
+    // Check for input or perform periodic tasks
+    return true; // Return true to repeat
+});
+----
+
+== Navigation
+
+* Back to <<index.adoc#,index>>
+* <<focus.adoc#,Widget Focus and Navigation>>

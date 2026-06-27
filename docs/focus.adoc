@@ -1,0 +1,74 @@
+= Widget Focus and Navigation
+
+[[top]]
+Back to <<index.adoc#,index>>.
+
+== Focus Management
+
+nctui automatically manages widget focus, allowing users to navigate through focusable widgets using keyboard shortcuts.
+
+== Focus Cycle
+
+By default, the framework automatically cycles focus between widgets using:
+
+* *Tab* - Move focus to the next widget
+* *Shift+Tab* - Move focus to the previous widget
+
+== Focusable Widgets
+
+Not all widgets are focusable by default. Use the `canFocus` property to control which widgets can receive focus:
+
+----
+auto label = std::make_shared<nctui::Label>(1, 1, "Static text");
+label->canFocus = false; // Labels are typically not focusable
+
+auto entry = std::make_shared<nctui::Entry>(1, 2, 20, "Edit me");
+entry->canFocus = true; // Entry widgets need focus for text input
+----
+
+== Focusable Widgets List
+
+The following widgets are typically focusable:
+
+[cols="2,1,3"]
+|===
+| Widget | Can Focus | Purpose
+| `Button` | Yes | Activate on Enter/Space
+| `Entry` | Yes | Text input
+| `ComboBox` | Yes | Dropdown selection
+| `CheckBox` | Yes | Toggle state
+| `RadioGroup` | Yes | Select radio button
+| `ListView` | Yes | Navigate and select items
+| `TextView` | Yes | Text navigation and editing
+| `ProgressBar` | No | Visual indicator only
+| `Label` | No | Static text display
+| `Frame` | No | Container widget
+| `Dialog` | No | Modal container
+|===
+
+== Programmatic Focus Control
+
+You can programmatically set focus to a specific widget:
+
+----
+auto entry1 = std::make_shared<nctui::Entry>(1, 1, 20);
+auto entry2 = std::make_shared<nctui::Entry>(1, 3, 20);
+
+// Set focus to entry2
+entry2->setFocus();
+
+// Check if a widget has focus
+if (entry2->hasFocus()) {
+    // Widget currently has focus
+}
+----
+
+== Focus Indication
+
+When a widget has focus, it is typically rendered with the `focus` color pair from the current theme. This provides visual feedback to users about which widget will receive keyboard input.
+
+== Navigation
+
+* Back to <<index.adoc#,index>>
+* <<input.adoc#,Input Handling>>
+* <<widgets.adoc#,Widget Reference>>

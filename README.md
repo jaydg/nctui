@@ -37,14 +37,6 @@ It is a C++20 port of a Terminal UI framework originally created for the Mono pr
 | `RadioGroup`  | Group of mutually exclusive radio buttons |
 | `Container`   | Base class for custom widget containers   |
 
-### Core Components
-
-- **Application** - Manages the notcurses context and top-level containers
-- **MainLoop** - Event loop for processing input and rendering
-- **Keys** - Key handling and accelerator support
-- **Globals** - Global state and constants
-- **Utils** - Utility functions and helpers
-
 ## Requirements
 
 - C++20 compliant compiler (GCC 11+, Clang 14+, MSVC 19.29+)
@@ -102,76 +94,19 @@ The `examples/` directory contains several examples demonstrating various featur
 
 ![TUI example](/tui.png "nctui: Torrent Manager example")
 
-## Usage
+For detailed usage information, module imports, input handling, focus management, dialogs, and menu system documentation, please refer to the [AsciiDoc documentation](https://github.com/jaydg/nctui/tree/main/docs) in the `docs/` folder.
 
-### Using nctui in Your Project
+## Documentation
 
-Add nctui as a dependency in your xmake.lua:
+The `docs/` directory contains comprehensive AsciiDoc documentation covering:
 
-```lua
-add_requires("notcurses++")
-
-target("my_app")
-    set_kind("binary")
-    add_deps("nctui")
-    add_packages("notcurses++")
-    add_files("src/*.cpp")
-```
-
-### Module Imports
-
-nctui uses C++20's module system. Import the main module to access all functionality:
-
-```cpp
-import nctui;
-```
-
-## Input Handling
-
-The framework supports three-phase key processing:
-
-1. **Hot Keys** (Global accelerators) - Alt-key combinations processed first
-2. **Normal Keys** - Sent to the focused widget
-3. **Cold Keys** (Cold accelerators) - e.g., Enter on default buttons
-
-Special keys:
-- **Tab/Shift-Tab** - Cycle focus between widgets
-- **Ctrl-C** - Stop the current top-level container's run loop
-- **Alt-X** - Common hot key pattern for menu accelerators
-
-## Widget Focus and Navigation
-
-Widgets can receive focus and respond to keyboard input. The framework automatically manages focus cycling with Tab and Shift-Tab. Use the `canFocus` property to control which widgets are focusable.
-
-## Dialogs and Message Boxes
-
-The framework provides convenience functions for common dialogs:
-
-```cpp
-// Simple message box
-nctui::messageBox("Title", "Message text");
-
-// Yes/No dialog
-bool result = nctui::messageBox("Question", "Continue?",
-                              nctui::MessageBoxButtons::YesNo);
-```
-
-## Menu System
-
-The `MenuBar` widget provides drop-down menu functionality:
-
-```cpp
-auto menubar = std::make_shared<nctui::MenuBar>();
-
-auto fileMenu = std::make_shared<nctui::Menu>("File");
-fileMenu->addItem("Open", []() { /* handle open */ });
-fileMenu->addItem("Save", []() { /* handle save */ });
-fileMenu->addSeparator();
-fileMenu->addItem("Quit", []() { /* handle quit */ });
-
-menubar->addMenu(fileMenu);
-container->add(menubar);
-```
+- **Usage**: Project setup, module imports, and requirements
+- **Widgets**: Complete widget reference with examples
+- **Input Handling**: Key processing phases and hot keys
+- **Focus Management**: Widget focus and navigation
+- **Dialogs**: Message boxes and dialog widgets
+- **Menu System**: Menu bar and drop-down menus
+- **Themes**: Color themes and styling
 
 ## License
 

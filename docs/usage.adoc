@@ -1,0 +1,64 @@
+= Usage
+
+[[top]]
+Back to <<index.adoc#,index>>.
+
+== Project Setup
+
+To use nctui in your project, add it as a dependency in your xmake.lua file:
+
+----
+add_requires("notcurses++")
+
+target("my_app")
+    set_kind("binary")
+    add_deps("nctui")
+    add_packages("notcurses++")
+    add_files("src/*.cpp")
+----
+
+== Module Imports
+
+nctui uses C++20's module system. Import the main module to access all functionality:
+
+----
+import nctui;
+----
+
+== Basic Application Structure
+
+A minimal nctui application follows this pattern:
+
+----
+#include <memory>
+
+int main() {
+    // Initialize the application
+    nctui::application::init();
+
+    // Create a top-level container
+    auto top = std::make_shared<nctui::Container>(
+        0, 0,
+        nctui::application::cols(),
+        nctui::application::lines());
+
+    // Add widgets to the container
+    // ...
+
+    // Run the application
+    nctui::application::run(top);
+
+    return 0;
+}
+----
+
+== Requirements
+
+* C++20 compliant compiler (GCC 11+, Clang 14+, MSVC 19.29+)
+* https://github.com/dankamongmen/notcurses[notcurses] (via notcurses++ C++ bindings)
+* https://xmake.io/[xmake] build system
+
+== Navigation
+
+* Back to <<index.adoc#,index>>
+* <<widgets.adoc#,Widget Reference>>
