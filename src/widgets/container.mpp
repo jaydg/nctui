@@ -237,6 +237,11 @@ public:
     /// Returns the currently focused child widget, or nullptr.
     std::shared_ptr<Widget> focused() const { return _focused; }
 
+    /// Propagates focus gain/loss to the focused child so that deeply nested
+    /// widgets (e.g. a TextView inside a Frame) correctly update their
+    /// _hasFocus state and show/hide the terminal cursor.
+    void setFocus(bool v) override;
+
     /// Focuses the specified widget in this container.
     ///
     /// Removes focus from the previously focused widget, sets hasFocus on
@@ -352,6 +357,11 @@ public:
 // -----------------------------------------------------------------------
 // Container method definitions (outside class body for shared-library ABI)
 // -----------------------------------------------------------------------
+
+void Container::setFocus(bool v) {
+    Widget::setFocus(v);
+    if (_focused) _focused->setFocus(v);
+}
 
 void Container::positionCursor() {
     if (!_focused) return;

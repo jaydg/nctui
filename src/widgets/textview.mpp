@@ -402,7 +402,7 @@ public:
     /// Positions the cursor on the current row and column and enables
     /// the hardware cursor there via cursor_show.
     void positionCursor() override {
-        if (!plane) return;
+        if (!hasFocus() || !plane) return;
         unsigned uh, uw;
         planeDim(uh, uw);
         int h = static_cast<int>(uh), w = static_cast<int>(uw);
