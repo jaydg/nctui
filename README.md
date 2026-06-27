@@ -74,7 +74,33 @@ xmake run tui_example
 
 ### Examples
 
-See the examples directory for several partial examples and a complete example.
+The `examples/` directory contains several examples demonstrating various features of nctui:
+
+| Example | Description | Widgets Used |
+|---------|-------------|--------------|
+| **simple.cpp** | Minimal nctui application showing basic widget usage | `Container`, `Label`, `Entry` |
+| **mainloop.cpp** | Demonstrates the `MainLoop` class with timer-based events | `MainLoop` (no UI widgets) |
+| **menu.cpp** | Shows a menu bar with drop-down menus and a read-only text viewer | `MenuBar`, `MenuBarItem`, `MenuItem`, `Frame`, `TextView`, `Dialog`, `DocBrowser`, `Button` |
+| **tui.cpp** | Full torrent-manager-style TUI with resizable multi-pane layout | `Container`, `Frame`, `Button`, `ListView`, `Label`, `TrimLabel`, `ProgressBar`, `Entry`, `RadioGroup`, `ComboBox`, `Dialog`, plus custom `LogWidget` |
+
+![Menu example](/menu.png "nctui: Menu, text viewer and documentation browser example")
+
+#### Example Highlights
+
+- **simple.cpp**: Perfect starting point. Creates a container with a label and an editable entry field.
+- **mainloop.cpp**: Demonstrates timer management with `addTimeout()` for scheduled callbacks.
+- **menu.cpp**: Features a complete menu system with File (Exit) and Help (About, Index) menus. The Index menu opens a `DocBrowser` dialog to view AsciiDoc documentation, and this README.md is displayed in a read-only `TextView` in the main window.
+- **tui.cpp**: A comprehensive demo showcasing advanced features including:
+  - Multi-pane layout with draggable resizable frames
+  - Status panel with `ProgressBar` and multiple `Label` widgets
+  - Options dialog with `Entry` fields, `RadioGroup`, and `ComboBox` for theme selection
+  - Live theme switching with preview
+  - Input validation for dialog fields
+  - Custom `LogWidget` demonstrating how to create custom widgets
+  - Timer-based status updates and logging
+  - Add dialog for file selection with validation
+
+![TUI example](/tui.png "nctui: Torrent Manager example")
 
 ## Usage
 
